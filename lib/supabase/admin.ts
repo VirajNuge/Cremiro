@@ -20,7 +20,19 @@ export function getSupabaseAdmin(): SupabaseClient {
   if (!supabaseUrl || supabaseUrl === "your-project-url.supabase.co") {
     throw new Error(
       "[admin] NEXT_PUBLIC_SUPABASE_URL is missing or still set to the placeholder value. " +
-      "Set it to your full Supabase project URL, e.g. https://xxxx.supabase.co"
+      "Set it to your project API URL, e.g. https://xxxx.supabase.co"
+    );
+  }
+
+  // Catch the common mistake of pasting the dashboard URL instead of the API URL
+  // Dashboard: https://supabase.com/dashboard/project/xxxx  ← WRONG
+  // API URL:   https://xxxx.supabase.co                     ← CORRECT
+  if (supabaseUrl.includes("supabase.com/dashboard")) {
+    throw new Error(
+      "[admin] NEXT_PUBLIC_SUPABASE_URL is set to the Supabase dashboard URL, not the project API URL. " +
+      `Got: "${supabaseUrl}". ` +
+      "Use the project ref URL instead: https://xxxx.supabase.co " +
+      "(find it in Supabase Dashboard → Project Settings → API → Project URL)"
     );
   }
 

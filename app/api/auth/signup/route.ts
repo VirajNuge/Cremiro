@@ -61,24 +61,6 @@ export async function POST(request: NextRequest) {
 }
 
 async function handleSignup(request: NextRequest) {
-  // DEV PROBE: verify Supabase admin API is reachable before doing any work
-  if (process.env.NODE_ENV !== "production") {
-    const probeUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/admin/users`;
-    try {
-      const probe = await fetch(probeUrl, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}` },
-      });
-      const probeText = await probe.text();
-      console.log(`[signup/probe] GET ${probeUrl} → HTTP ${probe.status}`);
-      if (!probe.ok) {
-        console.error("[signup/probe] body:", probeText.slice(0, 300));
-      }
-    } catch (e) {
-      console.error("[signup/probe] fetch failed:", e);
-    }
-  }
-
   // Rate limiting
   const ip =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
@@ -169,13 +151,7 @@ async function handleSignup(request: NextRequest) {
   });
 
   if (authError || !authData.user) {
-    // Log full error object to diagnose connectivity/config issues
-    console.error("[signup] auth.admin.createUser failed:", {
-      message: authError?.message,
-      status: authError?.status,
-      name: authError?.name,
-      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
-    });
+    console.error("[signup] auth.admin.createUser error:", authError?.message);
     return NextResponse.json({ error: GENERIC_ERROR }, { status: 400 });
   }
 
