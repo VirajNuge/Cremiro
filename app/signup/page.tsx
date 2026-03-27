@@ -249,10 +249,15 @@ export default function SignupPage() {
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     required
+                    minLength={3}
+                    maxLength={30}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm"
                     placeholder="contentmaster42"
                     disabled={loading}
                   />
+                  <p className="mt-1 text-xs text-gray-400">
+                    3–30 characters. Letters, numbers, underscores, dots, hyphens. Must start and end with a letter or number.
+                  </p>
                 </div>
 
                 <div>
@@ -282,9 +287,9 @@ export default function SignupPage() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
-                      minLength={6}
+                      minLength={8}
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 pr-10 text-sm"
-                      placeholder="At least 6 characters"
+                      placeholder="Min. 8 chars, upper, lower, number, symbol"
                       disabled={loading}
                     />
                     <button
@@ -308,7 +313,7 @@ export default function SignupPage() {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     required
-                    minLength={6}
+                    minLength={8}
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm"
                     placeholder="Re-enter your password"
                     disabled={loading}

@@ -71,7 +71,8 @@ export async function POST(request: NextRequest) {
   // Validate
   const emailCheck = validateEmail(email);
   if (!emailCheck.ok) return NextResponse.json({ error: GENERIC_ERROR }, { status: 400 });
-  if (!password) return NextResponse.json({ error: GENERIC_ERROR }, { status: 400 });
+  if (!password || password.length < 8 || password.length > 128)
+    return NextResponse.json({ error: GENERIC_ERROR }, { status: 400 });
   if (!captchaToken) {
     return NextResponse.json({ error: "CAPTCHA verification is required." }, { status: 400 });
   }

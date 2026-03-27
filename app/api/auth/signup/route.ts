@@ -107,13 +107,9 @@ export async function POST(request: NextRequest) {
   // Build full name
   const fullName = `${firstName} ${lastName}`;
 
-  // Hash username as an integrity/lookup token (bcrypt demonstration)
-  // This is stored alongside the profile to verify username hasn't been tampered with
-  const usernameHash = await bcrypt.hash(username.toLowerCase(), BCRYPT_ROUNDS);
-
   const admin = getSupabaseAdmin();
 
-  // Check username uniqueness before creating auth user
+  // Check username uniqueness BEFORE doing any expensive work (bcrypt)
   const { data: existingUsername } = await admin
     .from("profiles")
     .select("id")
@@ -124,6 +120,10 @@ export async function POST(request: NextRequest) {
     // Generic error — do NOT reveal that username is taken specifically
     return NextResponse.json({ error: GENERIC_ERROR }, { status: 400 });
   }
+
+  // Hash username as an integrity/lookup token (bcrypt demonstration)
+  // Done AFTER uniqueness check to avoid wasting CPU on duplicate registrations
+  const usernameHash = await bcrypt.hash(username.toLowerCase(), BCRYPT_ROUNDS);
 
   // Create Supabase Auth user (Supabase bcrypt-hashes the password internally)
   const { data: authData, error: authError } = await admin.auth.admin.createUser({
