@@ -1,31 +1,34 @@
 # Supabase Schema Setup
 
-Run these SQL blocks in order in **Supabase Dashboard → SQL Editor → New query**.
+Paste the **Full Setup** block below into **Supabase Dashboard → SQL Editor → New query** and click **Run**.
+
+The **Verify** block is separate — run it afterwards to confirm everything was created correctly.
 
 ---
 
-## 1. Profiles Table
+## Full Setup (run all at once)
 
 ```sql
+-- ============================================================
+-- 1. PROFILES TABLE
+-- ============================================================
 create table public.profiles (
-  id           uuid        default gen_random_uuid() primary key,
-  user_id      uuid        references auth.users(id) on delete cascade not null unique,
-  username     text        not null unique,
-  username_hash text       not null,
-  first_name   text        not null,
-  last_name    text        not null,
-  full_name    text        not null,
-  email        text        not null,
-  created_at   timestamptz default now() not null,
-  updated_at   timestamptz default now() not null
+  id            uuid        default gen_random_uuid() primary key,
+  user_id       uuid        references auth.users(id) on delete cascade not null unique,
+  username      text        not null unique,
+  username_hash text        not null,
+  first_name    text        not null,
+  last_name     text        not null,
+  full_name     text        not null,
+  email         text        not null,
+  created_at    timestamptz default now() not null,
+  updated_at    timestamptz default now() not null
 );
-```
 
----
+-- ============================================================
+-- 2. INDEXES
+-- ============================================================
 
-## 2. Indexes
-
-```sql
 -- Fast uniqueness checks on username (used on every signup)
 create index profiles_username_idx on public.profiles (username);
 
@@ -34,14 +37,12 @@ create index profiles_user_id_idx on public.profiles (user_id);
 
 -- Fast lookups by email (useful for admin queries)
 create index profiles_email_idx on public.profiles (email);
-```
 
----
+-- ============================================================
+-- 3. ROW LEVEL SECURITY
+-- ============================================================
 
-## 3. Row Level Security
-
-```sql
--- Enable RLS — no access is granted until policies below are added
+-- Enable RLS — no access until policies below are explicitly granted
 alter table public.profiles enable row level security;
 
 -- Users can read only their own profile
@@ -57,19 +58,14 @@ create policy "Users can update own profile"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
--- Users can never delete their own profile directly (admin only via service role)
--- No delete policy = delete is blocked for all non-service-role callers
+-- No insert policy for anon/authenticated roles —
+-- inserts are done exclusively via the service role key (bypasses RLS)
+-- No delete policy — direct deletes are blocked for all non-service-role callers
 
--- The signup API route uses the service role key which bypasses RLS.
--- No insert policy needed for anon/authenticated roles.
-```
+-- ============================================================
+-- 4. AUTO-UPDATE updated_at ON EVERY ROW CHANGE
+-- ============================================================
 
----
-
-## 4. Auto-update `updated_at`
-
-```sql
--- Function to stamp updated_at on every row update
 create or replace function public.handle_updated_at()
 returns trigger
 language plpgsql
@@ -82,20 +78,15 @@ begin
 end;
 $$;
 
--- Trigger: fire before every UPDATE on profiles
 create trigger profiles_updated_at
   before update on public.profiles
   for each row
   execute function public.handle_updated_at();
-```
 
----
+-- ============================================================
+-- 5. PREVENT user_id AND email FROM BEING CHANGED
+-- ============================================================
 
-## 5. Protect `user_id` and `email` from being changed
-
-```sql
--- Prevent users from reassigning their profile to a different auth user
--- or changing the stored email via a direct UPDATE
 create or replace function public.prevent_profile_id_change()
 returns trigger
 language plpgsql
@@ -121,24 +112,20 @@ create trigger profiles_prevent_id_change
 
 ---
 
-## 6. Verify Setup
-
-Run this to confirm everything was created correctly:
+## Verify Setup (run separately after)
 
 ```sql
--- Should return 1 row for the profiles table with RLS enabled
-select
-  tablename,
-  rowsecurity
+-- Should show rowsecurity = true
+select tablename, rowsecurity
 from pg_tables
 where schemaname = 'public' and tablename = 'profiles';
 
--- Should return 2 policies (view + update)
+-- Should show 2 policies: view (SELECT) + update (UPDATE)
 select policyname, cmd
 from pg_policies
 where tablename = 'profiles';
 
--- Should return 3 indexes
+-- Should show 4 indexes: pkey + username + user_id + email
 select indexname
 from pg_indexes
 where tablename = 'profiles';

@@ -3,7 +3,7 @@ import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext";
 
 export const metadata: Metadata = {
-  title: "YT to Content",
+  title: "Cremiro",
   description: "Transform YouTube content into valuable insights",
 };
 

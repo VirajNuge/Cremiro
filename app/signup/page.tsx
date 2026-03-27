@@ -122,7 +122,7 @@ export default function SignupPage() {
                 style={{ color: "#16423c" }}
                 whileHover={{ scale: 1.05 }}
               >
-                YT to Content
+                Cremiro
               </motion.div>
             </Link>
 
@@ -170,7 +170,7 @@ export default function SignupPage() {
                   style={{ color: "#16423c" }}
                   whileHover={{ scale: 1.05 }}
                 >
-                  YT to Content
+                  Cremiro
                 </motion.div>
               </Link>
 

@@ -21,7 +21,7 @@ export default function Home() {
               className="text-2xl font-bold"
               style={{ color: "#16423c" }}
             >
-              YT to Content
+              Cremiro
             </motion.div>
             <div className="flex items-center gap-4">
               {user ? (
