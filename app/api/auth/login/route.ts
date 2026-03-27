@@ -38,6 +38,18 @@ function checkRateLimit(ip: string): boolean {
 const GENERIC_ERROR = "Invalid email or password. Please try again.";
 
 export async function POST(request: NextRequest) {
+  try {
+    return await handleLogin(request);
+  } catch (err) {
+    console.error("[login] unhandled error:", err);
+    return NextResponse.json(
+      { error: "An unexpected error occurred. Please try again." },
+      { status: 500 }
+    );
+  }
+}
+
+async function handleLogin(request: NextRequest) {
   // Rate limiting
   const ip =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??

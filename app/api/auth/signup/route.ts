@@ -49,6 +49,18 @@ const BCRYPT_ROUNDS = 12;
 const GENERIC_ERROR = "Unable to create account. Please check your details and try again.";
 
 export async function POST(request: NextRequest) {
+  try {
+    return await handleSignup(request);
+  } catch (err) {
+    console.error("[signup] unhandled error:", err);
+    return NextResponse.json(
+      { error: "An unexpected error occurred. Please try again." },
+      { status: 500 }
+    );
+  }
+}
+
+async function handleSignup(request: NextRequest) {
   // Rate limiting
   const ip =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??

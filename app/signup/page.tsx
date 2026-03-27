@@ -67,7 +67,13 @@ export default function SignupPage() {
       }),
     });
 
-    const data = await res.json();
+    // Safely parse response — guard against empty or non-JSON bodies
+    let data: { error?: string; message?: string } = {};
+    try {
+      data = await res.json();
+    } catch {
+      // Body was empty or not JSON (e.g. unexpected server crash)
+    }
 
     if (!res.ok) {
       setError(data.error ?? "Unable to create account. Please check your details and try again.");

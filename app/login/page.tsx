@@ -42,7 +42,13 @@ export default function LoginPage() {
       body: JSON.stringify({ email, password, captchaToken }),
     });
 
-    const data = await res.json();
+    // Safely parse response — guard against empty or non-JSON bodies
+    let data: { error?: string } = {};
+    try {
+      data = await res.json();
+    } catch {
+      // Body was empty or not JSON (e.g. unexpected server crash)
+    }
 
     if (!res.ok) {
       // Generic message — never reveal whether email exists or password is wrong
