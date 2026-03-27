@@ -151,22 +151,10 @@ async function handleSignup(request: NextRequest) {
   });
 
   if (authError || !authData.user) {
-    console.error("[signup] auth.admin.createUser error:", authError?.message);
+    // Log error code only — never log the message (may contain PII or internal details)
+    console.error("[signup] auth.admin.createUser failed, code:", authError?.status ?? "unknown");
     return NextResponse.json({ error: GENERIC_ERROR }, { status: 400 });
   }
-
-  // Send confirmation email via Supabase Auth
-  // (captchaToken is passed to the client-side flow — here we use admin API which bypasses it)
-  // Generate a magic link / OTP for email confirmation
-  const origin = request.headers.get("origin") ?? process.env.NEXT_PUBLIC_SITE_URL ?? "";
-  await admin.auth.admin.generateLink({
-    type: "signup",
-    email,
-    password,
-    options: {
-      redirectTo: `${origin}/auth/callback`,
-    },
-  });
 
   // Insert profile record
   const { error: profileError } = await admin.from("profiles").insert({

@@ -1,14 +1,16 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 export type AuthUser = {
   id: string
   email?: string
   created_at?: string
-  app_metadata?: Record<string, unknown>
-  user_metadata?: Record<string, unknown>
+  user_metadata?: {
+    avatar_url?: string | null
+    full_name?: string | null
+  }
   // Profile fields
   username?: string | null
   first_name?: string | null
@@ -42,9 +44,13 @@ async function fetchUser(): Promise<AuthUser | null> {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
-  const supabase = createClient()
+  // Stable ref — createClient() returns a new object every call, so storing it
+  // in a ref prevents the useEffect from re-running on every render.
+  const supabaseRef = useRef(createClient())
 
   useEffect(() => {
+    const supabase = supabaseRef.current
+
     // Use server-validated getUser() via our API route instead of
     // getSession() which reads from client-side storage and can be spoofed.
     fetchUser().then((u) => {
@@ -69,10 +75,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })
 
     return () => subscription.unsubscribe()
-  }, [supabase])
+  }, []) // empty deps — supabase client is stable via ref
 
   const signOut = async () => {
-    await supabase.auth.signOut()
+    await supabaseRef.current.auth.signOut()
     setUser(null)
   }
 

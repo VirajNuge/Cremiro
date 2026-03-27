@@ -1,8 +1,8 @@
 {
-  "name": "clip",
+  "name": "cremiro",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Transform YouTube content into valuable content with AI",
+  "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
