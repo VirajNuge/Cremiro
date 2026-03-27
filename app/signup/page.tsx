@@ -218,7 +218,7 @@ export default function SignupPage() {
                       onChange={(e) => setFirstName(e.target.value)}
                       required
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm"
-                      placeholder="Jane"
+                      placeholder="John"
                       disabled={loading}
                     />
                   </div>
@@ -233,7 +233,7 @@ export default function SignupPage() {
                       onChange={(e) => setLastName(e.target.value)}
                       required
                       className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm"
-                      placeholder="Doe"
+                      placeholder="Smith"
                       disabled={loading}
                     />
                   </div>
@@ -250,7 +250,7 @@ export default function SignupPage() {
                     onChange={(e) => setUsername(e.target.value)}
                     required
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm"
-                    placeholder="janedoe123"
+                    placeholder="contentmaster42"
                     disabled={loading}
                   />
                 </div>
