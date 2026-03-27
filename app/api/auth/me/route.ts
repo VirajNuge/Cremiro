@@ -15,6 +15,13 @@ export async function GET() {
     return NextResponse.json({ user: null }, { status: 401 });
   }
 
+  // Fetch profile from profiles table
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("username, first_name, last_name, full_name")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
   // Only return safe, non-sensitive fields
   return NextResponse.json({
     user: {
@@ -23,6 +30,11 @@ export async function GET() {
       created_at: user.created_at,
       app_metadata: user.app_metadata,
       user_metadata: user.user_metadata,
+      // Profile fields (null if not yet created e.g. OAuth users)
+      username: profile?.username ?? null,
+      first_name: profile?.first_name ?? null,
+      last_name: profile?.last_name ?? null,
+      full_name: profile?.full_name ?? (user.user_metadata?.full_name as string) ?? null,
     },
   });
 }

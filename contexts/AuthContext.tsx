@@ -1,11 +1,23 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState } from 'react'
-import { User } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/client'
 
+export type AuthUser = {
+  id: string
+  email?: string
+  created_at?: string
+  app_metadata?: Record<string, unknown>
+  user_metadata?: Record<string, unknown>
+  // Profile fields
+  username?: string | null
+  first_name?: string | null
+  last_name?: string | null
+  full_name?: string | null
+}
+
 type AuthContextType = {
-  user: User | null
+  user: AuthUser | null
   loading: boolean
   signOut: () => Promise<void>
 }
@@ -16,39 +28,44 @@ const AuthContext = createContext<AuthContextType>({
   signOut: async () => {},
 })
 
+async function fetchUser(): Promise<AuthUser | null> {
+  try {
+    const res = await fetch('/api/auth/me', { credentials: 'include' })
+    if (!res.ok) return null
+    const { user } = await res.json()
+    return user ?? null
+  } catch {
+    return null
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
 
   useEffect(() => {
     // Use server-validated getUser() via our API route instead of
     // getSession() which reads from client-side storage and can be spoofed.
-    fetch('/api/auth/me')
-      .then((res) => res.json())
-      .then(({ user }) => {
-        setUser(user ?? null)
-        setLoading(false)
-      })
-      .catch(() => {
-        setUser(null)
-        setLoading(false)
-      })
+    fetchUser().then((u) => {
+      setUser(u)
+      setLoading(false)
+    })
 
     // Listen for client-side auth state changes (e.g. sign-out, token refresh)
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      // Re-validate server-side on any auth state change
       if (session) {
-        fetch('/api/auth/me')
-          .then((res) => res.json())
-          .then(({ user }) => setUser(user ?? null))
-          .catch(() => setUser(null))
+        // Re-validate server-side on any auth state change
+        fetchUser().then((u) => {
+          setUser(u)
+          setLoading(false)
+        })
       } else {
         setUser(null)
+        setLoading(false)
       }
-      setLoading(false)
     })
 
     return () => subscription.unsubscribe()

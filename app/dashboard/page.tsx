@@ -77,13 +77,25 @@ export default function DashboardPage() {
           {/* Welcome Section */}
           <div className="mb-12">
             <h1 className="text-5xl font-bold mb-4" style={{ color: "#16423c" }}>
-              Welcome to Your Dashboard
+              Welcome{user.full_name ? `, ${user.full_name}` : ""}!
             </h1>
             <p className="text-xl text-gray-600 mb-2">
-              You're logged in as:{" "}
-              <span className="font-semibold" style={{ color: "#fd6333" }}>
-                {user.email}
-              </span>
+              {user.username && (
+                <>
+                  Signed in as{" "}
+                  <span className="font-semibold" style={{ color: "#fd6333" }}>
+                    @{user.username}
+                  </span>
+                </>
+              )}
+              {!user.username && (
+                <>
+                  Signed in as{" "}
+                  <span className="font-semibold" style={{ color: "#fd6333" }}>
+                    {user.email}
+                  </span>
+                </>
+              )}
             </p>
             <p className="text-gray-500">
               This is a placeholder dashboard. More features coming soon!
@@ -180,6 +192,16 @@ export default function DashboardPage() {
               Account Information
             </h3>
             <div className="space-y-2 text-gray-600">
+              {user.full_name && (
+                <p>
+                  <span className="font-medium">Name:</span> {user.full_name}
+                </p>
+              )}
+              {user.username && (
+                <p>
+                  <span className="font-medium">Username:</span> @{user.username}
+                </p>
+              )}
               <p>
                 <span className="font-medium">Email:</span> {user.email}
               </p>
@@ -187,7 +209,7 @@ export default function DashboardPage() {
                 <span className="font-medium">User ID:</span> {user.id}
               </p>
               <p>
-                <span className="font-medium">Created:</span>{" "}
+                <span className="font-medium">Member since:</span>{" "}
                 {new Date(user.created_at!).toLocaleDateString()}
               </p>
             </div>

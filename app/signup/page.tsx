@@ -8,6 +8,9 @@ import { useRouter } from "next/navigation";
 import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 
 export default function SignupPage() {
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -49,24 +52,32 @@ export default function SignupPage() {
       return;
     }
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+    // Call the server-side signup API (handles validation, bcrypt, profile insertion)
+    const res = await fetch("/api/auth/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        firstName,
+        lastName,
+        username,
+        email,
+        password,
         captchaToken,
-      },
+      }),
     });
 
-    if (error) {
-      // Generic message to prevent user enumeration
-      setError("Unable to create account. Please check your details and try again.");
+    const data = await res.json();
+
+    if (!res.ok) {
+      setError(data.error ?? "Unable to create account. Please check your details and try again.");
       resetCaptcha();
       setLoading(false);
-    } else {
-      setSuccess(true);
-      setTimeout(() => router.push("/dashboard"), 2000);
+      return;
     }
+
+    setSuccess(true);
+    setLoading(false);
   };
 
   const handleGoogleSignup = async () => {
@@ -178,7 +189,7 @@ export default function SignupPage() {
                   animate={{ opacity: 1, y: 0 }}
                   className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm"
                 >
-                  Account created successfully! Redirecting...
+                  Account created! Please check your email to confirm your address before logging in.
                 </motion.div>
               )}
 
@@ -195,6 +206,55 @@ export default function SignupPage() {
 
               {/* Signup Form */}
               <form onSubmit={handleEmailSignup} className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-1">
+                      First Name
+                    </label>
+                    <input
+                      id="firstName"
+                      type="text"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      required
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm"
+                      placeholder="Jane"
+                      disabled={loading}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="lastName" className="block text-sm font-medium text-gray-700 mb-1">
+                      Last Name
+                    </label>
+                    <input
+                      id="lastName"
+                      type="text"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      required
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm"
+                      placeholder="Doe"
+                      disabled={loading}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">
+                    Username
+                  </label>
+                  <input
+                    id="username"
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    required
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm"
+                    placeholder="janedoe123"
+                    disabled={loading}
+                  />
+                </div>
+
                 <div>
                   <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
                     Email

@@ -35,15 +35,18 @@ export default function LoginPage() {
       return;
     }
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-      options: { captchaToken },
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email, password, captchaToken }),
     });
 
-    if (error) {
+    const data = await res.json();
+
+    if (!res.ok) {
       // Generic message — never reveal whether email exists or password is wrong
-      setError("Invalid email or password. Please try again.");
+      setError(data.error ?? "Invalid email or password. Please try again.");
       resetCaptcha();
       setLoading(false);
     } else {
