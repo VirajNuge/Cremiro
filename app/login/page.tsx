@@ -2,9 +2,10 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -13,21 +14,37 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const captchaRef = useRef<TurnstileInstance | null>(null);
   const router = useRouter();
   const supabase = createClient();
+
+  const resetCaptcha = () => {
+    captchaRef.current?.reset();
+    setCaptchaToken(null);
+  };
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
+    if (!captchaToken) {
+      setError("Please complete the CAPTCHA verification.");
+      setLoading(false);
+      return;
+    }
+
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
+      options: { captchaToken },
     });
 
     if (error) {
-      setError(error.message);
+      // Generic message — never reveal whether email exists or password is wrong
+      setError("Invalid email or password. Please try again.");
+      resetCaptcha();
       setLoading(false);
     } else {
       router.push("/dashboard");
@@ -46,7 +63,7 @@ export default function LoginPage() {
     });
 
     if (error) {
-      setError(error.message);
+      setError("Failed to sign in with Google. Please try again.");
       setLoading(false);
     }
   };
@@ -264,9 +281,24 @@ export default function LoginPage() {
                   </Link>
                 </div>
 
+                {/* Cloudflare Turnstile CAPTCHA */}
+                <div className="flex justify-center">
+                  <Turnstile
+                    ref={captchaRef}
+                    siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+                    onSuccess={(token) => setCaptchaToken(token)}
+                    onError={() => {
+                      setCaptchaToken(null);
+                      setError("CAPTCHA verification failed. Please try again.");
+                    }}
+                    onExpire={() => setCaptchaToken(null)}
+                    options={{ theme: "light" }}
+                  />
+                </div>
+
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || !captchaToken}
                   className="w-full py-3 rounded-lg font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                   style={{ backgroundColor: "#fd6333" }}
                 >

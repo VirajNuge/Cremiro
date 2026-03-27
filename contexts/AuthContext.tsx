@@ -22,17 +22,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = createClient()
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      setLoading(false)
-    })
+    // Use server-validated getUser() via our API route instead of
+    // getSession() which reads from client-side storage and can be spoofed.
+    fetch('/api/auth/me')
+      .then((res) => res.json())
+      .then(({ user }) => {
+        setUser(user ?? null)
+        setLoading(false)
+      })
+      .catch(() => {
+        setUser(null)
+        setLoading(false)
+      })
 
-    // Listen for auth changes
+    // Listen for client-side auth state changes (e.g. sign-out, token refresh)
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
+      // Re-validate server-side on any auth state change
+      if (session) {
+        fetch('/api/auth/me')
+          .then((res) => res.json())
+          .then(({ user }) => setUser(user ?? null))
+          .catch(() => setUser(null))
+      } else {
+        setUser(null)
+      }
       setLoading(false)
     })
 

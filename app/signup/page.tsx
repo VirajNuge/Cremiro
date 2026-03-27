@@ -2,9 +2,10 @@
 
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -15,8 +16,15 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const captchaRef = useRef<TurnstileInstance | null>(null);
   const router = useRouter();
   const supabase = createClient();
+
+  const resetCaptcha = () => {
+    captchaRef.current?.reset();
+    setCaptchaToken(null);
+  };
 
   const handleEmailSignup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,13 +32,19 @@ export default function SignupPage() {
     setError(null);
 
     if (password !== confirmPassword) {
-      setError("Passwords do not match");
+      setError("Passwords do not match.");
       setLoading(false);
       return;
     }
 
     if (!agreeToTerms) {
-      setError("Please agree to the Terms of Service");
+      setError("Please agree to the Terms of Service.");
+      setLoading(false);
+      return;
+    }
+
+    if (!captchaToken) {
+      setError("Please complete the CAPTCHA verification.");
       setLoading(false);
       return;
     }
@@ -40,11 +54,14 @@ export default function SignupPage() {
       password,
       options: {
         emailRedirectTo: `${window.location.origin}/auth/callback`,
+        captchaToken,
       },
     });
 
     if (error) {
-      setError(error.message);
+      // Generic message to prevent user enumeration
+      setError("Unable to create account. Please check your details and try again.");
+      resetCaptcha();
       setLoading(false);
     } else {
       setSuccess(true);
@@ -64,7 +81,7 @@ export default function SignupPage() {
     });
 
     if (error) {
-      setError(error.message);
+      setError("Failed to sign up with Google. Please try again.");
       setLoading(false);
     }
   };
@@ -293,9 +310,24 @@ export default function SignupPage() {
                   </label>
                 </div>
 
+                {/* Cloudflare Turnstile CAPTCHA */}
+                <div className="flex justify-center pt-1">
+                  <Turnstile
+                    ref={captchaRef}
+                    siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+                    onSuccess={(token) => setCaptchaToken(token)}
+                    onError={() => {
+                      setCaptchaToken(null);
+                      setError("CAPTCHA verification failed. Please try again.");
+                    }}
+                    onExpire={() => setCaptchaToken(null)}
+                    options={{ theme: "light" }}
+                  />
+                </div>
+
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || !captchaToken}
                   className="w-full py-2.5 rounded-lg font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-sm mt-4"
                   style={{ backgroundColor: "#fd6333" }}
                 >
