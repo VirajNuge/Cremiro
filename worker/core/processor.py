@@ -138,6 +138,20 @@ def download_video(
 
     output_template = os.path.join(output_dir, "source.%(ext)s")
 
+    # Build cookies args: prefer cookies.txt file (works everywhere including
+    # production), fall back to reading directly from a local browser profile.
+    cookies_file = os.getenv("YTDLP_COOKIES_FILE", "")
+    cookies_browser = os.getenv("YTDLP_COOKIES_BROWSER", "")
+    if cookies_file and os.path.isfile(cookies_file):
+        cookies_args = ["--cookies", cookies_file]
+        logger.info(f"Using cookies file: {cookies_file}")
+    elif cookies_browser:
+        cookies_args = ["--cookies-from-browser", cookies_browser]
+        logger.info(f"Using cookies from browser: {cookies_browser}")
+    else:
+        cookies_args = []
+        logger.warning("No cookies configured — YouTube may throttle or block downloads")
+
     cmd = [
         "yt-dlp",
         "--no-playlist",
@@ -147,11 +161,9 @@ def download_video(
         "--print-json",
         "--no-warnings",
         "--match-filter", f"duration<={max_duration}",
-        # Bypass YouTube bot detection: pass browser cookies + spoof user-agent
-        "--cookies-from-browser", os.getenv("YTDLP_COOKIES_BROWSER", "chrome"),
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        # Throttle workaround: limit rate so YouTube doesn't stall the connection
         "--throttled-rate", "100K",
+        *cookies_args,
         youtube_url,
     ]
 
