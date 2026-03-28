@@ -440,13 +440,30 @@ export default function GeneratePanel() {
         return;
       }
 
-      // Build initial job items from IDs
+      // Reconstruct the flat ordered list of { job_type, platform } that the API
+      // expands on the server (mirrors the expansion logic in /api/generate/route.ts).
+      const expandedMeta: Array<{ job_type: string; platform: string | null }> = [];
+      for (const item of items) {
+        const jobType = item.job_type as string;
+        if (jobType === "viral_clip" && Array.isArray(item.platforms)) {
+          for (const platform of item.platforms as string[]) {
+            for (let i = 0; i < (item.quantity as number); i++) {
+              expandedMeta.push({ job_type: jobType, platform });
+            }
+          }
+        } else {
+          for (let i = 0; i < (item.quantity as number); i++) {
+            expandedMeta.push({ job_type: jobType, platform: null });
+          }
+        }
+      }
+
       const jobItemIds: string[] = data.job_item_ids ?? [];
       const initialJobItems: JobItem[] = jobItemIds.map((id: string, i: number) => ({
         id,
-        job_type: items[0]?.job_type as string ?? "unknown",
+        job_type: expandedMeta[i]?.job_type ?? "unknown",
         status: "pending" as JobStatus,
-        platform: null,
+        platform: expandedMeta[i]?.platform ?? null,
         output_data: null,
         output_refs: null,
         error_message: null,

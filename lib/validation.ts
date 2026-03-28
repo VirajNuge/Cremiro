@@ -214,7 +214,10 @@ export function validateGenerateRequest(
       }
     }
 
-    const creditCost = (CREDIT_COSTS[jobType] ?? 0) * quantity;
+    // For viral_clip, credit cost scales by platforms × quantity (one job item per platform per clip)
+    const creditCost = jobType === "viral_clip"
+      ? (CREDIT_COSTS[jobType] ?? 0) * quantity * (platforms?.length ?? 1)
+      : (CREDIT_COSTS[jobType] ?? 0) * quantity;
     totalCredits += creditCost;
 
     validatedItems.push({

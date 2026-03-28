@@ -234,11 +234,14 @@ async function handleGenerate(request: NextRequest) {
     console.error("[generate] WORKER_URL not configured");
     // Mark all job items as failed (triggers auto-refund via RPC)
     for (const jobItemId of jobItemIds) {
-      await admin.rpc("update_job_item_status", {
+      const { error: refundErr } = await admin.rpc("update_job_item_status", {
         p_job_item_id: jobItemId,
         p_status: "failed",
         p_error_message: "Worker service unavailable. Credits have been refunded.",
       });
+      if (refundErr) {
+        console.error("[generate] failed to mark job item as failed (refund may not have applied):", jobItemId, refundErr.message);
+      }
     }
     return NextResponse.json(
       { error: "Service temporarily unavailable. Please try again later." },
@@ -251,11 +254,14 @@ async function handleGenerate(request: NextRequest) {
   if (!webhookSecret) {
     console.error("[generate] WORKER_WEBHOOK_SECRET not configured");
     for (const jobItemId of jobItemIds) {
-      await admin.rpc("update_job_item_status", {
+      const { error: refundErr } = await admin.rpc("update_job_item_status", {
         p_job_item_id: jobItemId,
         p_status: "failed",
         p_error_message: "Worker service misconfigured. Credits have been refunded.",
       });
+      if (refundErr) {
+        console.error("[generate] failed to mark job item as failed (refund may not have applied):", jobItemId, refundErr.message);
+      }
     }
     return NextResponse.json(
       { error: "Service temporarily unavailable. Please try again later." },
@@ -301,11 +307,14 @@ async function handleGenerate(request: NextRequest) {
 
       // Mark all job items as failed (triggers auto-refund)
       for (const jobItemId of jobItemIds) {
-        await admin.rpc("update_job_item_status", {
+        const { error: refundErr } = await admin.rpc("update_job_item_status", {
           p_job_item_id: jobItemId,
           p_status: "failed",
           p_error_message: "Failed to start processing. Credits have been refunded.",
         });
+        if (refundErr) {
+          console.error("[generate] failed to mark job item as failed (refund may not have applied):", jobItemId, refundErr.message);
+        }
       }
 
       return NextResponse.json(
@@ -318,11 +327,14 @@ async function handleGenerate(request: NextRequest) {
 
     // Mark all job items as failed (triggers auto-refund)
     for (const jobItemId of jobItemIds) {
-      await admin.rpc("update_job_item_status", {
+      const { error: refundErr } = await admin.rpc("update_job_item_status", {
         p_job_item_id: jobItemId,
         p_status: "failed",
         p_error_message: "Worker service unreachable. Credits have been refunded.",
       });
+      if (refundErr) {
+        console.error("[generate] failed to mark job item as failed (refund may not have applied):", jobItemId, refundErr.message);
+      }
     }
 
     return NextResponse.json(
