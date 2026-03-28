@@ -252,6 +252,100 @@ function IconZap({ className = "w-[18px] h-[18px]" }: { className?: string }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Text Output Panel (social_text / blog_post)                       */
+/* ------------------------------------------------------------------ */
+
+function TextOutputPanel({
+  jobType,
+  outputData,
+}: {
+  jobType: string;
+  outputData: Record<string, unknown>;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const getText = (): string => {
+    if (jobType === "social_text") {
+      const parts = outputData.thread_parts as string[] | undefined;
+      if (parts?.length) return parts.join("\n\n---\n\n");
+      return (outputData.full_transcript as string) ?? "";
+    }
+    if (jobType === "blog_post") {
+      const sections = outputData.sections as Array<{ title: string; content: string }> | undefined;
+      if (sections?.length) {
+        return sections.map((s) => `## ${s.title}\n\n${s.content}`).join("\n\n");
+      }
+      return (outputData.full_transcript as string) ?? "";
+    }
+    return JSON.stringify(outputData, null, 2);
+  };
+
+  const text = getText();
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownload = () => {
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = jobType === "blog_post" ? "blog-post.md" : "social-text.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      transition={{ duration: 0.3, ease: "easeOut" }}
+      className="border-t border-gray-100 px-3 pb-3 pt-2.5 bg-white"
+    >
+      <pre className="text-[11px] text-gray-600 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto bg-gray-50 rounded-lg p-2.5 mb-2">
+        {text || "No content generated."}
+      </pre>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[12px] font-semibold border transition-all hover:bg-gray-50"
+          style={{ borderColor: "#fd6333", color: "#fd6333" }}
+        >
+          {copied ? (
+            <>
+              <IconCheck className="w-3.5 h-3.5" />
+              Copied!
+            </>
+          ) : (
+            <>
+              <IconClipboard className="w-3.5 h-3.5" />
+              Copy
+            </>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={handleDownload}
+          className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[12px] font-semibold border transition-all hover:bg-gray-50"
+          style={{ borderColor: "#9ca3af", color: "#6b7280" }}
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Download
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  GeneratePanel Component                                            */
 /* ------------------------------------------------------------------ */
 
@@ -915,63 +1009,104 @@ export default function GeneratePanel() {
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: 0.05 * idx, duration: 0.25 }}
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-gray-100 bg-gray-50/50"
+                    className="rounded-xl border border-gray-100 bg-gray-50/50 overflow-hidden"
                   >
-                    {/* Status indicator */}
-                    <div className="flex-shrink-0">
-                      {job.status === "processing" ? (
-                        <div
-                          className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
-                          style={{ borderColor: statusColor, borderTopColor: "transparent" }}
-                        />
-                      ) : job.status === "completed" ? (
-                        <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: statusColor }}>
-                          <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="20 6 9 17 4 12" />
-                          </svg>
-                        </div>
-                      ) : job.status === "failed" ? (
-                        <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: statusColor }}>
-                          <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
-                          </svg>
-                        </div>
-                      ) : (
-                        <div
-                          className="w-5 h-5 rounded-full border-2"
-                          style={{ borderColor: statusColor }}
-                        />
-                      )}
-                    </div>
-
-                    {/* Job info */}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-medium" style={{ color: "#16423c" }}>
-                        {ct?.label ?? job.job_type}
-                        {job.platform && (
-                          <span className="text-gray-400 font-normal ml-1.5">
-                            / {job.platform}
-                          </span>
+                    {/* ── Job row ── */}
+                    <div className="flex items-center gap-3 px-3 py-2.5">
+                      {/* Status indicator */}
+                      <div className="flex-shrink-0">
+                        {job.status === "processing" ? (
+                          <div
+                            className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
+                            style={{ borderColor: statusColor, borderTopColor: "transparent" }}
+                          />
+                        ) : job.status === "completed" ? (
+                          <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: statusColor }}>
+                            <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          </div>
+                        ) : job.status === "failed" ? (
+                          <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: statusColor }}>
+                            <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </div>
+                        ) : (
+                          <div
+                            className="w-5 h-5 rounded-full border-2"
+                            style={{ borderColor: statusColor }}
+                          />
                         )}
-                      </p>
-                      {job.error_message && (
-                        <p className="text-[11px] text-red-500 mt-0.5 truncate">
-                          {job.error_message}
+                      </div>
+
+                      {/* Job info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-medium" style={{ color: "#16423c" }}>
+                          {ct?.label ?? job.job_type}
+                          {job.platform && (
+                            <span className="text-gray-400 font-normal ml-1.5">
+                              / {job.platform}
+                            </span>
+                          )}
                         </p>
-                      )}
+                        {job.error_message && (
+                          <p className="text-[11px] text-red-500 mt-0.5 truncate">
+                            {job.error_message}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Status badge */}
+                      <span
+                        className="text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                        style={{
+                          color: statusColor,
+                          backgroundColor: `${statusColor}14`,
+                        }}
+                      >
+                        {statusLabel}
+                      </span>
                     </div>
 
-                    {/* Status badge */}
-                    <span
-                      className="text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
-                      style={{
-                        color: statusColor,
-                        backgroundColor: `${statusColor}14`,
-                      }}
-                    >
-                      {statusLabel}
-                    </span>
+                    {/* ── Output panel (completed viral_clip) ── */}
+                    {job.status === "completed" && job.job_type === "viral_clip" && job.output_refs && job.output_refs.length > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        transition={{ duration: 0.3, ease: "easeOut" }}
+                        className="border-t border-gray-100 px-3 pb-3 pt-2.5 bg-white"
+                      >
+                        <video
+                          src={job.output_refs[0]}
+                          controls
+                          playsInline
+                          className="w-full rounded-lg bg-black"
+                          style={{ maxHeight: "280px" }}
+                        />
+                        <a
+                          href={job.output_refs[0]}
+                          download
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 flex items-center justify-center gap-2 w-full py-2 rounded-lg text-[13px] font-semibold border transition-all hover:bg-gray-50"
+                          style={{ borderColor: "#fd6333", color: "#fd6333" }}
+                        >
+                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                          Download {job.platform ? `(${job.platform})` : ""}
+                        </a>
+                      </motion.div>
+                    )}
+
+                    {/* ── Output panel (completed text outputs) ── */}
+                    {job.status === "completed" && (job.job_type === "social_text" || job.job_type === "blog_post") && job.output_data && (
+                      <TextOutputPanel jobType={job.job_type} outputData={job.output_data} />
+                    )}
                   </motion.div>
                 );
               })}
