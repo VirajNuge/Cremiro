@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import GeneratePanel from "./GeneratePanel";
 
 /* ------------------------------------------------------------------ */
 /*  Inline SVG Icons                                                   */
@@ -213,11 +214,13 @@ function FeatureCard({
   title,
   description,
   delay = 0,
+  onClick,
 }: {
   icon: React.ReactNode;
   title: string;
   description: string;
   delay?: number;
+  onClick?: () => void;
 }) {
   return (
     <motion.button
@@ -226,6 +229,7 @@ function FeatureCard({
       transition={{ delay, duration: 0.35 }}
       whileHover={{ y: -3, boxShadow: "0 10px 32px rgba(0,0,0,0.07)" }}
       whileTap={{ scale: 0.985 }}
+      onClick={onClick}
       className="bg-white rounded-2xl p-5 border border-gray-100/80 text-left w-full cursor-pointer"
     >
       <div
@@ -502,6 +506,9 @@ export default function DashboardPage() {
           )}
         </AnimatePresence>
 
+        {activeNav === "generate" ? (
+          <GeneratePanel />
+        ) : (
         <div className="max-w-4xl mx-auto px-6 py-8">
 
           {/* Greeting + Credits */}
@@ -544,18 +551,21 @@ export default function DashboardPage() {
               title="Persona"
               description="Define your brand voice and content style for consistent, on-brand output."
               delay={0.08}
+              onClick={() => setActiveNav("persona")}
             />
             <FeatureCard
               icon={<IconGenerate className="w-[18px] h-[18px]" />}
               title="Generate"
               description="Transform YouTube videos into blog posts, threads, and more."
               delay={0.16}
+              onClick={() => setActiveNav("generate")}
             />
             <FeatureCard
               icon={<IconSchedule className="w-[18px] h-[18px]" />}
               title="Schedule"
               description="Plan and publish your generated content across platforms."
               delay={0.24}
+              onClick={() => setActiveNav("schedule")}
             />
           </div>
 
@@ -591,6 +601,7 @@ export default function DashboardPage() {
           </motion.div>
 
         </div>
+        )}
       </main>
     </div>
   );
