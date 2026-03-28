@@ -337,7 +337,7 @@ export default function DashboardPage() {
 
       {/* ── User Pill ── */}
       <div className="px-3 mb-3">
-        <button className="w-full flex items-center gap-2.5 bg-gray-50 hover:bg-gray-100/80 border border-gray-100 rounded-xl px-3 py-2 transition-colors">
+        <div className="w-full flex items-center gap-2.5 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2">
           <div className="relative flex-shrink-0">
             <UserAvatar user={user} size={32} />
             {/* online indicator */}
@@ -356,8 +356,15 @@ export default function DashboardPage() {
               <p className="text-[11px] text-gray-400 leading-tight">Online</p>
             )}
           </div>
-          <IconChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-        </button>
+        </div>
+        {/* Token count */}
+        <div className="flex items-center gap-1.5 mt-2 px-1">
+          <span style={{ color: "#fd6333" }}>
+            <IconCredits className="w-3.5 h-3.5" />
+          </span>
+          <span className="text-[12px] font-bold" style={{ color: "#16423c" }}>1,000</span>
+          <span className="text-[11px] text-gray-400">tokens remaining</span>
+        </div>
       </div>
 
       {/* ── Main Nav ── */}
