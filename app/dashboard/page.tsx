@@ -289,12 +289,16 @@ export default function DashboardPage() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState<string>("persona");
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
       router.push("/login");
     }
   }, [user, loading, router]);
+
+  const emailConfirmed = !!user?.email_confirmed_at;
+  const showConfirmBanner = !emailConfirmed && !bannerDismissed;
 
   const handleSignOut = async () => {
     await signOut();
@@ -456,6 +460,41 @@ export default function DashboardPage() {
 
       {/* ══ Main Content ══ */}
       <main className="md:pl-[232px] pt-13 md:pt-0">
+
+        {/* Email confirmation banner */}
+        <AnimatePresence>
+          {showConfirmBanner && (
+            <motion.div
+              key="confirm-banner"
+              initial={{ opacity: 0, y: -12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.3 }}
+              className="flex items-start gap-3 px-6 py-3 border-b border-amber-200"
+              style={{ backgroundColor: "#fffbeb" }}
+            >
+              <svg className="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+              <p className="text-sm flex-1" style={{ color: "#92400e" }}>
+                <strong>Confirm your email</strong> — Please check your inbox and verify your email address. Some features require a confirmed account.
+              </p>
+              <button
+                onClick={() => setBannerDismissed(true)}
+                className="text-amber-500 hover:text-amber-700 flex-shrink-0 ml-2"
+                aria-label="Dismiss"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div className="max-w-4xl mx-auto px-6 py-8">
 
           {/* Greeting + Credits */}

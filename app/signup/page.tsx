@@ -18,7 +18,6 @@ export default function SignupPage() {
   const [agreeToTerms, setAgreeToTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const captchaRef = useRef<TurnstileInstance | null>(null);
   const router = useRouter();
@@ -82,8 +81,9 @@ export default function SignupPage() {
       return;
     }
 
-    setSuccess(true);
     setLoading(false);
+    // Redirect to login with a success flag so we can show a confirmation notice
+    router.push("/login?registered=1");
   };
 
   const handleGoogleSignup = async () => {
@@ -110,59 +110,63 @@ export default function SignupPage() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.5 }}
-        className="relative w-full h-screen overflow-hidden"
+        className="relative w-full h-screen"
       >
         <div className="grid md:grid-cols-2 h-screen">
-          {/* Left Side - UI Mockup */}
-          <div className="hidden md:flex flex-col items-center justify-center p-12 relative" style={{ backgroundColor: "#ffffff" }}>
+          {/* Left Side - Full-cover image */}
+          <div className="hidden md:block relative overflow-hidden">
+            {/* Background image */}
+            <img
+              src="/imagegee.png"
+              alt="Cremiro"
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                objectPosition: "center",
+              }}
+            />
+            {/* Dark overlay for text legibility */}
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: "linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.5) 100%)",
+              }}
+            />
             {/* Logo */}
-            <Link href="/">
-              <motion.div
-                className="absolute top-8 left-8 text-2xl font-bold cursor-pointer"
-                style={{ color: "#16423c" }}
-                whileHover={{ scale: 1.05 }}
+            <Link href="/" style={{ position: "absolute", top: "2rem", left: "2rem", zIndex: 10 }}>
+              <span
+                className="text-2xl font-bold cursor-pointer"
+                style={{ color: "#ffffff", textShadow: "0 1px 4px rgba(0,0,0,0.4)" }}
               >
                 Cremiro
-              </motion.div>
+              </span>
             </Link>
-
             {/* Tagline */}
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1, duration: 0.5 }}
-              className="absolute bottom-12 left-0 right-0 text-center px-8"
-              style={{ marginLeft: "150px" }}
+            <div
+              style={{
+                position: "absolute",
+                bottom: "2.5rem",
+                left: 0,
+                right: 0,
+                textAlign: "center",
+                zIndex: 10,
+                padding: "0 2rem",
+              }}
             >
-              <p className="text-sm font-medium" style={{ color: "#16423c" }}>
+              <p className="text-sm font-semibold" style={{ color: "rgba(255,255,255,0.95)", textShadow: "0 1px 3px rgba(0,0,0,0.5)" }}>
                 Join thousands turning YouTube into content
               </p>
-              <p className="text-xs text-gray-500 mt-1">Create your account in seconds.</p>
-            </motion.div>
-
-            {/* Floating Image */}
-            <motion.div
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2, duration: 0.6 }}
-              className="relative z-10"
-            >
-              <motion.div
-                animate={{ y: [-8, 0, -8] }}
-                transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-              >
-                <img
-                  src="/LoginSignup flat image.png"
-                  alt="App preview"
-                  style={{ width: "740px", marginLeft: "150px" }}
-                />
-              </motion.div>
-            </motion.div>
+              <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.7)" }}>Create your account in seconds.</p>
+            </div>
           </div>
 
           {/* Right Side - Form */}
-          <div className="flex items-center justify-center p-8 md:p-12">
-            <div className="w-full max-w-sm">
+          <div className="flex items-center justify-center overflow-y-auto h-screen">
+            <div className="w-full max-w-sm px-8 py-8">
               {/* Mobile Logo */}
               <Link href="/">
                 <motion.div
@@ -188,17 +192,6 @@ export default function SignupPage() {
                 </p>
               </motion.div>
 
-              {/* Success Message */}
-              {success && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm"
-                >
-                  Account created! Please check your email to confirm your address before logging in.
-                </motion.div>
-              )}
-
               {/* Error Message */}
               {error && (
                 <motion.div
@@ -211,7 +204,7 @@ export default function SignupPage() {
               )}
 
               {/* Signup Form */}
-              <form onSubmit={handleEmailSignup} className="space-y-3">
+              <form onSubmit={handleEmailSignup} className="space-y-2.5">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-1">

@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 export type AuthUser = {
   id: string
   email?: string
+  email_confirmed_at?: string | null
   created_at?: string
   user_metadata?: {
     avatar_url?: string | null

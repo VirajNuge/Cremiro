@@ -29,6 +29,7 @@ export async function GET() {
     user: {
       id: user.id,
       email: user.email,
+      email_confirmed_at: user.email_confirmed_at ?? null,
       created_at: user.created_at,
       // Only safe user_metadata fields needed by the UI (avatar, display name from OAuth)
       user_metadata: {
