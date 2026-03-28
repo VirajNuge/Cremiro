@@ -114,11 +114,16 @@ async function handleGenerate(request: NextRequest) {
   // ── Concurrency check ──
   const admin = getSupabaseAdmin();
 
+  // Only count requests created within the last 30 minutes to avoid
+  // permanently-stuck rows (worker crash, missed callback, etc.) blocking new generations.
+  const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+
   const { count: activeRequests, error: countError } = await admin
     .from("requests")
     .select("id", { count: "exact", head: true })
     .eq("user_id", user.id)
-    .in("status", ["pending", "processing"]);
+    .in("status", ["pending", "processing"])
+    .gte("created_at", thirtyMinutesAgo);
 
   if (countError) {
     console.error("[generate] concurrency check error:", countError.message);

@@ -604,6 +604,122 @@ Expected output (Phase 2):
 
 ---
 
+## Phase 3: Stale Request Cleanup (run all at once)
+
+Marks requests that have been stuck in `pending` or `processing` for more than 30 minutes as `failed`, and refunds any un-refunded job items within them. Safe to run multiple times (idempotent).
+
+```sql
+-- ============================================================
+-- 1. FUNCTION: expire stale requests
+-- ============================================================
+-- Marks requests older than p_max_age_minutes that are still in
+-- pending/processing as failed, and triggers credit refunds for
+-- any job items that haven't been refunded yet.
+create or replace function public.expire_stale_requests(
+  p_max_age_minutes integer default 30
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_cutoff         timestamptz;
+  v_request_id     uuid;
+  v_job_item_id    uuid;
+  v_requests_fixed integer := 0;
+  v_items_refunded integer := 0;
+begin
+  v_cutoff := now() - (p_max_age_minutes || ' minutes')::interval;
+
+  -- Loop over stale requests
+  for v_request_id in
+    select id
+    from public.requests
+    where status in ('pending', 'processing')
+      and created_at < v_cutoff
+    for update skip locked
+  loop
+    -- Refund any pending/processing job items inside this request
+    for v_job_item_id in
+      select id
+      from public.job_items
+      where request_id = v_request_id
+        and status in ('pending', 'processing')
+      for update skip locked
+    loop
+      -- Mark item failed
+      update public.job_items
+      set status = 'failed',
+          error_message = 'Request expired: exceeded maximum processing time',
+          completed_at = now()
+      where id = v_job_item_id;
+
+      -- Refund credits (idempotent)
+      perform public.refund_job_item(v_job_item_id);
+
+      v_items_refunded := v_items_refunded + 1;
+    end loop;
+
+    -- Mark request failed
+    update public.requests
+    set status = 'failed'
+    where id = v_request_id;
+
+    v_requests_fixed := v_requests_fixed + 1;
+  end loop;
+
+  return jsonb_build_object(
+    'requests_expired', v_requests_fixed,
+    'items_refunded',   v_items_refunded,
+    'cutoff',           v_cutoff
+  );
+end;
+$$;
+
+-- ============================================================
+-- 2. SCHEDULE: run every 5 minutes via pg_cron
+-- ============================================================
+-- Requires pg_cron extension enabled in Supabase (Database → Extensions).
+-- If pg_cron is not available, call expire_stale_requests() manually
+-- from a Supabase Edge Function or external cron.
+--
+-- select cron.schedule(
+--   'expire-stale-requests',
+--   '*/5 * * * *',
+--   $$ select public.expire_stale_requests(30); $$
+-- );
+```
+
+---
+
+## Phase 3 Verify (run separately after Phase 3)
+
+```sql
+-- Check function exists
+select routine_name
+from information_schema.routines
+where routine_schema = 'public' and routine_name = 'expire_stale_requests';
+
+-- Dry-run: preview what would be expired (does NOT modify data)
+select id, status, created_at, now() - created_at as age
+from public.requests
+where status in ('pending', 'processing')
+  and created_at < now() - interval '30 minutes';
+
+-- Manual invocation (safe to run any time — idempotent)
+select public.expire_stale_requests(30);
+```
+
+Expected output (Phase 3):
+
+| Check | Expected |
+|---|---|
+| Function exists | `expire_stale_requests` |
+| Manual invocation | Returns `{ requests_expired: N, items_refunded: M, cutoff: "..." }` |
+
+---
+
 ## Verify Setup (run separately after)
 
 ```sql
