@@ -147,6 +147,11 @@ def download_video(
         "--print-json",
         "--no-warnings",
         "--match-filter", f"duration<={max_duration}",
+        # Bypass YouTube bot detection: pass browser cookies + spoof user-agent
+        "--cookies-from-browser", os.getenv("YTDLP_COOKIES_BROWSER", "chrome"),
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        # Throttle workaround: limit rate so YouTube doesn't stall the connection
+        "--throttled-rate", "100K",
         youtube_url,
     ]
 
@@ -154,7 +159,7 @@ def download_video(
         cmd,
         capture_output=True,
         text=True,
-        timeout=300,  # 5 minute timeout for download
+        timeout=600,  # 10 minute timeout (cookies bypass is slower initially)
     )
 
     if result.returncode != 0:
