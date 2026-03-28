@@ -1014,10 +1014,19 @@ def process_viral_clips_batch(
         )
 
         # Stage 4: Render each clip config against the selected segments
+        # Deduplicate: platforms with the same resolution + same clip rank
+        # share the exact same rendered video (e.g. tiktok/reels/shorts are
+        # all 1080x1920). Render once per unique (rank, resolution), then
+        # copy for duplicate platforms.
         if status_callback:
             status_callback("rendering")
 
         all_clips: list[ClipResult] = []
+
+        # Cache: (clip_rank, target_w, target_h) -> rendered ClipResult
+        render_cache: dict[tuple[int, int, int], ClipResult] = {}
+        # Cache: clip_rank -> face_positions (no need to re-detect per platform)
+        face_cache: dict[int, list] = {}
 
         for config in clip_configs:
             platform = config.get("platform", "tiktok")
@@ -1028,21 +1037,42 @@ def process_viral_clips_batch(
             if clip_rank < len(clip_segments):
                 segment = clip_segments[clip_rank]
             else:
-                # More clips requested than segments available — wrap around
                 segment = clip_segments[clip_rank % len(clip_segments)]
 
             start_time = segment.start_time
             end_time = segment.end_time
 
-            # Detect faces on this specific segment
-            face_positions = detect_faces(
-                video_path, start_time=start_time, end_time=end_time,
-            )
-
-            # Generate subtitles for this segment
             resolution = PLATFORM_RESOLUTIONS.get(platform, (1080, 1920))
+            target_w, target_h = resolution
+            cache_key = (clip_rank, target_w, target_h)
+
+            if cache_key in render_cache:
+                # Same rank + same resolution already rendered — reuse it
+                cached = render_cache[cache_key]
+                all_clips.append(ClipResult(
+                    output_path=cached.output_path,
+                    duration=cached.duration,
+                    platform=platform,  # keep the platform label for this job
+                    width=cached.width,
+                    height=cached.height,
+                    subtitle_path=cached.subtitle_path,
+                ))
+                logger.info(
+                    f"Reusing render for {platform} (same resolution as "
+                    f"{cached.platform}: {target_w}x{target_h})"
+                )
+                continue
+
+            # Detect faces once per clip rank (not per platform)
+            if clip_rank not in face_cache:
+                face_cache[clip_rank] = detect_faces(
+                    video_path, start_time=start_time, end_time=end_time,
+                )
+            face_positions = face_cache[clip_rank]
+
+            # Generate subtitles for this resolution
             subtitle_path = os.path.join(
-                work_dir, f"clip_{clip_rank}_{platform}.ass",
+                work_dir, f"clip_{clip_rank}_{target_w}x{target_h}.ass",
             )
             generate_ass_subtitles(
                 transcript, subtitle_path,
@@ -1053,7 +1083,7 @@ def process_viral_clips_batch(
 
             # Render clip with smart crop + subtitles
             output_path = os.path.join(
-                work_dir, f"clip_{clip_rank}_{platform}.mp4",
+                work_dir, f"clip_{clip_rank}_{target_w}x{target_h}.mp4",
             )
             clip_result = render_clip(
                 video_path, output_path,
@@ -1062,6 +1092,7 @@ def process_viral_clips_batch(
                 subtitle_path=subtitle_path,
             )
 
+            render_cache[cache_key] = clip_result
             all_clips.append(clip_result)
 
         if status_callback:

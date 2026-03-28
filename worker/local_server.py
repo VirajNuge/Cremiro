@@ -226,12 +226,16 @@ async def process_viral_clip_batch(
                 )
             return
 
-        # Match each rendered clip back to its job item and send callbacks
+        # Match each rendered clip back to its job item and send callbacks.
+        # Multiple jobs may share the same rendered file (e.g. tiktok + reels
+        # + shorts all produce 1080x1920) — we copy it once per job_item_id.
         for i, (config, clip) in enumerate(zip(clip_configs, result.clips)):
             job_id = config["job_item_id"]
 
             filename = f"{job_id}_{clip.platform}.mp4"
             dest = OUTPUTS_DIR / filename
+
+            # Copy the rendered file (may be the same source for same-res platforms)
             shutil.copy2(clip.output_path, dest)
             public_url = f"{WORKER_BASE_URL}/outputs/{filename}"
 
