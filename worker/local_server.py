@@ -120,11 +120,14 @@ async def send_callback(
     if error_message is not None:
         payload["error_message"] = error_message
 
-    # Sign the callback
+    # Encode body manually so the signed bytes exactly match what is sent.
+    # httpx's json= uses compact encoding (no spaces), whereas json.dumps()
+    # defaults to spaces after separators — causing signature mismatch.
+    body_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
     timestamp = str(int(time.time()))
     nonce = str(uuid.uuid4())
-    body_str = json.dumps(payload)
-    signature_payload = f"{timestamp}.{nonce}.{body_str}"
+    signature_payload = f"{timestamp}.{nonce}.{body_bytes.decode('utf-8')}"
 
     signature = hmac.new(
         WEBHOOK_SECRET.encode("utf-8"),
@@ -136,7 +139,7 @@ async def send_callback(
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 callback_url,
-                json=payload,
+                content=body_bytes,
                 headers={
                     "Content-Type": "application/json",
                     "X-Signature": signature,
