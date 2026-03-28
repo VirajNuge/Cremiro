@@ -78,7 +78,7 @@ const CONTENT_TYPES: ContentType[] = [
   {
     key: "ai_image",
     label: "Single AI Image",
-    credits: 15,
+    credits: 5,
     description: "Custom thumbnail or promotional image from key moments",
     maxQty: 5,
     icon: (
@@ -86,21 +86,6 @@ const CONTENT_TYPES: ContentType[] = [
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <circle cx="8.5" cy="8.5" r="1.5" />
         <polyline points="21 15 16 10 5 21" />
-      </svg>
-    ),
-  },
-  {
-    key: "ig_carousel",
-    label: "Visual IG Carousel",
-    credits: 50,
-    description: "Multi-slide Instagram carousel from video highlights",
-    maxQty: 5,
-    icon: (
-      <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="7" height="7" />
-        <rect x="14" y="3" width="7" height="7" />
-        <rect x="14" y="14" width="7" height="7" />
-        <rect x="3" y="14" width="7" height="7" />
       </svg>
     ),
   },
