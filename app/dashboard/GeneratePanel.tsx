@@ -96,13 +96,68 @@ const CREDIT_COSTS: Record<string, number> = Object.fromEntries(
 );
 
 /* ------------------------------------------------------------------ */
-/*  Format & Style Options                                             */
+/*  Platform Options (replaces format toggle)                          */
 /* ------------------------------------------------------------------ */
 
-const FORMAT_OPTIONS = [
-  { key: "9:16", label: "Vertical", subtitle: "TikTok, Reels, Shorts" },
-  { key: "4:5", label: "Square-ish", subtitle: "LinkedIn, Facebook" },
-  { key: "16:9", label: "Landscape", subtitle: "YouTube, Twitter" },
+interface PlatformOption {
+  key: string;
+  label: string;
+  ratio: string;
+  icon: React.ReactNode;
+}
+
+const PLATFORM_OPTIONS: PlatformOption[] = [
+  {
+    key: "tiktok",
+    label: "TikTok",
+    ratio: "9:16",
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1v-3.5a6.37 6.37 0 0 0-.79-.05A6.34 6.34 0 0 0 3.15 15a6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.34-6.34V8.69a8.28 8.28 0 0 0 4.76 1.51v-3.5a4.83 4.83 0 0 1-1-.01z" />
+      </svg>
+    ),
+  },
+  {
+    key: "reels",
+    label: "Reels",
+    ratio: "9:16",
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2.982c2.937 0 3.285.011 4.445.064a6.087 6.087 0 0 1 2.042.379 3.408 3.408 0 0 1 1.265.823 3.408 3.408 0 0 1 .823 1.265 6.087 6.087 0 0 1 .379 2.042c.053 1.16.064 1.508.064 4.445s-.011 3.285-.064 4.445a6.087 6.087 0 0 1-.379 2.042 3.643 3.643 0 0 1-2.088 2.088 6.087 6.087 0 0 1-2.042.379c-1.16.053-1.508.064-4.445.064s-3.285-.011-4.445-.064a6.087 6.087 0 0 1-2.042-.379 3.408 3.408 0 0 1-1.265-.823 3.408 3.408 0 0 1-.823-1.265 6.087 6.087 0 0 1-.379-2.042c-.053-1.16-.064-1.508-.064-4.445s.011-3.285.064-4.445a6.087 6.087 0 0 1 .379-2.042 3.408 3.408 0 0 1 .823-1.265 3.408 3.408 0 0 1 1.265-.823 6.087 6.087 0 0 1 2.042-.379c1.16-.053 1.508-.064 4.445-.064M12 1c-2.987 0-3.362.013-4.535.066a8.074 8.074 0 0 0-2.67.51 5.392 5.392 0 0 0-1.949 1.27 5.392 5.392 0 0 0-1.27 1.949 8.074 8.074 0 0 0-.51 2.67C1.013 8.638 1 9.013 1 12s.013 3.362.066 4.535a8.074 8.074 0 0 0 .51 2.67 5.392 5.392 0 0 0 1.27 1.949 5.392 5.392 0 0 0 1.949 1.27 8.074 8.074 0 0 0 2.67.51C8.638 22.987 9.013 23 12 23s3.362-.013 4.535-.066a8.074 8.074 0 0 0 2.67-.51 5.625 5.625 0 0 0 3.219-3.219 8.074 8.074 0 0 0 .51-2.67C22.987 15.362 23 14.987 23 12s-.013-3.362-.066-4.535a8.074 8.074 0 0 0-.51-2.67 5.392 5.392 0 0 0-1.27-1.949 5.392 5.392 0 0 0-1.949-1.27 8.074 8.074 0 0 0-2.67-.51C15.362 1.013 14.987 1 12 1z" />
+        <path d="M17.5 7.5 14 4H10l3.5 3.5H10l-3.5-3.5H4v3.5L7.5 11 4 14.5V17h2.5L10 13.5 13.5 17h3l-3.5-3.5L16.5 10l-3.5-3.5H17.5z" opacity="0.6" />
+      </svg>
+    ),
+  },
+  {
+    key: "shorts",
+    label: "Shorts",
+    ratio: "9:16",
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M10 14.65v-5.3L15 12l-5 2.65zm7.77-4.33-1.2-.5L18 9.06c1.84-.96 2.53-3.23 1.56-5.06s-3.24-2.53-5.07-1.56L6 6.94c-1.29.68-2.07 2.04-2 3.49.07 1.42.93 2.67 2.22 3.25.03.01 1.2.5 1.2.5L6 14.93c-1.83.97-2.53 3.24-1.56 5.07.97 1.83 3.24 2.53 5.07 1.56l8.5-4.5c1.29-.68 2.06-2.04 1.99-3.49-.07-1.42-.94-2.68-2.23-3.25z" />
+      </svg>
+    ),
+  },
+  {
+    key: "linkedin",
+    label: "LinkedIn",
+    ratio: "4:5",
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+      </svg>
+    ),
+  },
+  {
+    key: "twitter",
+    label: "X / Twitter",
+    ratio: "16:9",
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+      </svg>
+    ),
+  },
 ];
 
 const STYLE_PRESETS = [
@@ -170,8 +225,8 @@ export default function GeneratePanel() {
   // Content type selections: key -> quantity
   const [selectedTypes, setSelectedTypes] = useState<Record<string, number>>({});
 
-  // Format & style (only for video clips)
-  const [format, setFormat] = useState<string>("9:16");
+  // Platform selection & style (only for video clips)
+  const [selectedPlatforms, setSelectedPlatforms] = useState<Record<string, boolean>>({});
   const [style, setStyle] = useState<string>("minimalist");
 
   // URL handlers
@@ -232,7 +287,12 @@ export default function GeneratePanel() {
 
   const selectedCount = Object.keys(selectedTypes).length;
   const hasVideoClips = selectedTypes["viral_clip"] !== undefined;
-  const canGenerate = urlValid && selectedCount > 0;
+  const selectedPlatformCount = Object.values(selectedPlatforms).filter(Boolean).length;
+  const canGenerate = urlValid && selectedCount > 0 && (!hasVideoClips || selectedPlatformCount > 0);
+
+  const togglePlatform = (key: string) => {
+    setSelectedPlatforms((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const handleGenerate = () => {
     // Placeholder — backend integration pending
@@ -421,37 +481,40 @@ export default function GeneratePanel() {
           className="bg-white rounded-2xl p-5 border border-gray-100/80 mb-6"
         >
           <h2 className="text-[15px] font-semibold mb-4" style={{ color: "#16423c" }}>
-            Format & Style
+            Platforms & Style
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            {/* Format Toggle */}
+            {/* Platform Selection */}
             <div>
               <p className="text-[12px] font-medium text-gray-500 uppercase tracking-wide mb-2">
-                Aspect Ratio
+                Target Platforms
               </p>
-              <div className="flex gap-2">
-                {FORMAT_OPTIONS.map((opt) => {
-                  const isActive = format === opt.key;
+              <div className="flex gap-2 flex-wrap">
+                {PLATFORM_OPTIONS.map((plat) => {
+                  const isActive = !!selectedPlatforms[plat.key];
                   return (
                     <button
-                      key={opt.key}
+                      key={plat.key}
                       type="button"
-                      onClick={() => setFormat(opt.key)}
-                      className={`flex-1 px-3 py-3 rounded-xl text-center cursor-pointer transition-all duration-150 ${
+                      onClick={() => togglePlatform(plat.key)}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-center cursor-pointer transition-all duration-150 ${
                         isActive
                           ? "border-2 shadow-sm bg-white"
                           : "border border-gray-200 hover:border-gray-300 bg-white"
                       }`}
                       style={isActive ? { borderColor: "#fd6333" } : undefined}
                     >
-                      <span
-                        className="text-[13px] font-semibold block"
-                        style={{ color: "#16423c" }}
-                      >
-                        {opt.label}
+                      <span style={{ color: isActive ? "#fd6333" : "#9ca3af" }}>
+                        {plat.icon}
                       </span>
-                      <span className="text-[11px] text-gray-400 mt-0.5 block">
-                        {opt.subtitle}
+                      <span
+                        className="text-[13px] font-medium"
+                        style={{ color: isActive ? "#16423c" : "#6b7280" }}
+                      >
+                        {plat.label}
+                      </span>
+                      <span className="text-[10px] text-gray-400 ml-0.5">
+                        {plat.ratio}
                       </span>
                     </button>
                   );
@@ -552,7 +615,11 @@ export default function GeneratePanel() {
               ? "Enter a YouTube URL and select at least one content type."
               : !urlValid
               ? "Enter a valid YouTube URL to continue."
-              : "Select at least one content type."}
+              : selectedCount === 0
+              ? "Select at least one content type."
+              : hasVideoClips && selectedPlatformCount === 0
+              ? "Select at least one target platform for your video clips."
+              : ""}
           </p>
         )}
       </motion.div>
