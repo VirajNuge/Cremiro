@@ -162,7 +162,7 @@ def download_video(
         "--no-warnings",
         "--match-filter", f"duration<={max_duration}",
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "--throttled-rate", "100K",
+        "--concurrent-fragments", "4",
         *cookies_args,
         youtube_url,
     ]
@@ -232,12 +232,14 @@ def transcribe_video(
         model_size,
         device=device,
         compute_type=compute_type,
+        cpu_threads=8,
     )
 
     segments_iter, info = model.transcribe(
         video_path,
         word_timestamps=True,
         vad_filter=True,
+        beam_size=1,
         vad_parameters={"min_silence_duration_ms": 500},
     )
 
@@ -269,8 +271,8 @@ def transcribe_video(
 # ── Stage 3: Face Detection ─────────────────────────────────────────
 def detect_faces(
     video_path: str,
-    sample_interval: float = 2.0,  # sample every N seconds
-    max_samples: int = 500,
+    sample_interval: float = 4.0,  # sample every N seconds
+    max_samples: int = 150,
 ) -> list[FacePosition]:
     """
     Detect face positions by sampling frames at regular intervals.
@@ -585,7 +587,7 @@ def render_clip(
         "-i", video_path,
         "-vf", filter_chain,
         "-c:v", "libx264",
-        "-preset", "medium",
+        "-preset", "fast",
         "-crf", "23",
         "-c:a", "aac",
         "-b:a", "128k",
