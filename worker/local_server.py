@@ -40,6 +40,7 @@ from core.processor import (
     process_blog_post,
     process_social_text,
     process_viral_clip,
+    process_viral_clips_batch,
 )
 
 # Load environment variables
@@ -173,65 +174,111 @@ async def send_callback(
 
 
 # ── Background Processing ──────────────────────────────────────────
+async def process_viral_clip_batch(
+    clip_jobs: list[JobItemPayload],
+    youtube_url: str,
+    callback_url: str,
+) -> None:
+    """
+    Process multiple viral_clip job items as a single batch.
+
+    Downloads the video once, transcribes once, selects N clip segments
+    ranked by YouTube's "most replayed" heatmap, then renders each clip.
+    Each job item gets its own callback with its rendered output.
+    """
+    work_dir = tempfile.mkdtemp(prefix=f"cremiro_batch_")
+
+    try:
+        # Notify all jobs: processing
+        for job in clip_jobs:
+            await send_callback(callback_url, job.id, "processing")
+
+        # Build clip configs from job items
+        # Each job's clip_index maps to a rank in the heatmap ranking
+        clip_configs: list[dict] = []
+        for job in clip_jobs:
+            clip_configs.append({
+                "platform": job.platform or "tiktok",
+                "style": job.style or "minimalist",
+                "clip_rank": job.input_data.get("clip_index", 0),
+                "job_item_id": job.id,  # track which job gets which clip
+            })
+
+        # Determine how many unique clip segments we need
+        max_rank = max(c["clip_rank"] for c in clip_configs) + 1
+
+        # Run the batch pipeline (download once, transcribe once)
+        result = process_viral_clips_batch(
+            youtube_url=youtube_url,
+            clip_configs=clip_configs,
+            num_clips=max_rank,
+            work_dir=work_dir,
+            whisper_model=WHISPER_MODEL,
+            whisper_device=WHISPER_DEVICE,
+            whisper_compute_type=WHISPER_COMPUTE_TYPE,
+        )
+
+        if result.error:
+            for job in clip_jobs:
+                await send_callback(
+                    callback_url, job.id, "failed",
+                    error_message=result.error,
+                )
+            return
+
+        # Match each rendered clip back to its job item and send callbacks
+        for i, (config, clip) in enumerate(zip(clip_configs, result.clips)):
+            job_id = config["job_item_id"]
+
+            filename = f"{job_id}_{clip.platform}.mp4"
+            dest = OUTPUTS_DIR / filename
+            shutil.copy2(clip.output_path, dest)
+            public_url = f"{WORKER_BASE_URL}/outputs/{filename}"
+
+            clips_meta = [{
+                "url": public_url,
+                "duration": clip.duration,
+                "platform": clip.platform,
+                "width": clip.width,
+                "height": clip.height,
+            }]
+
+            logger.info(f"Output available at: {public_url}")
+
+            await send_callback(
+                callback_url, job_id, "completed",
+                output_data={"clips": clips_meta},
+                output_refs=[public_url],
+            )
+
+    except Exception as e:
+        logger.error(f"Batch clip processing failed: {e}")
+        for job in clip_jobs:
+            await send_callback(
+                callback_url, job.id, "failed",
+                error_message=str(e),
+            )
+
+    finally:
+        try:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
 async def process_job_item(
     job_item: JobItemPayload,
     youtube_url: str,
     callback_url: str,
 ) -> None:
-    """Process a single job item in the background."""
+    """Process a single non-clip job item in the background."""
     work_dir = tempfile.mkdtemp(prefix=f"cremiro_{job_item.id[:8]}_")
 
     try:
         # Notify: processing
         await send_callback(callback_url, job_item.id, "processing")
 
-        if job_item.job_type == "viral_clip":
-            result = process_viral_clip(
-                youtube_url=youtube_url,
-                platform=job_item.platform or "tiktok",
-                style=job_item.style or "minimalist",
-                clip_index=job_item.input_data.get("clip_index", 0),
-                work_dir=work_dir,
-                whisper_model=WHISPER_MODEL,
-                whisper_device=WHISPER_DEVICE,
-                whisper_compute_type=WHISPER_COMPUTE_TYPE,
-            )
-
-            if result.error:
-                await send_callback(
-                    callback_url, job_item.id, "failed",
-                    error_message=result.error,
-                )
-                return
-
-            # Copy rendered clips into the persistent outputs directory and
-            # build public HTTP URLs so the browser can preview / download them.
-            output_refs: list[str] = []
-            clips_meta = []
-            for clip in result.clips:
-                filename = f"{job_item.id}_{clip.platform}.mp4"
-                dest = OUTPUTS_DIR / filename
-                shutil.copy2(clip.output_path, dest)
-                public_url = f"{WORKER_BASE_URL}/outputs/{filename}"
-                output_refs.append(public_url)
-                clips_meta.append({
-                    "url": public_url,
-                    "duration": clip.duration,
-                    "platform": clip.platform,
-                    "width": clip.width,
-                    "height": clip.height,
-                })
-                logger.info(f"Output available at: {public_url}")
-
-            output_data = {"clips": clips_meta}
-
-            await send_callback(
-                callback_url, job_item.id, "completed",
-                output_data=output_data,
-                output_refs=output_refs,
-            )
-
-        elif job_item.job_type == "social_text":
+        if job_item.job_type == "social_text":
             result = process_social_text(
                 youtube_url=youtube_url,
                 work_dir=work_dir,
@@ -367,8 +414,17 @@ async def process_request(
         f"with {len(payload.job_items)} job items"
     )
 
-    # Process each job item in the background
-    for job_item in payload.job_items:
+    # Process job items — batch viral_clip jobs together (download once),
+    # process other job types individually.
+    clip_jobs = [j for j in payload.job_items if j.job_type == "viral_clip"]
+    other_jobs = [j for j in payload.job_items if j.job_type != "viral_clip"]
+
+    if clip_jobs:
+        asyncio.create_task(
+            process_viral_clip_batch(clip_jobs, payload.youtube_url, payload.callback_url)
+        )
+
+    for job_item in other_jobs:
         asyncio.create_task(
             process_job_item(job_item, payload.youtube_url, payload.callback_url)
         )

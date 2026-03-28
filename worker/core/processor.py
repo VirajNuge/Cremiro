@@ -3,14 +3,16 @@ Core video processing pipeline.
 
 Shared between local FastAPI server and Modal.com production deployment.
 Pipeline stages:
-  1. Download: yt-dlp extracts video + audio
+  1. Download: yt-dlp extracts video + audio + heatmap metadata
   2. Transcribe: faster-whisper generates word-level timestamps
-  3. Detect Faces: MediaPipe samples frames for face positions
-  4. Smart Crop: FFmpeg crops to platform aspect ratio centered on face
-  5. Burn Subtitles: FFmpeg overlays word-timed ASS subtitles
-  6. Upload: Results stored to configured storage (local or Supabase Storage)
+  3. Select Clips: heatmap-based engagement ranking + transcript boundary snapping
+  4. Detect Faces: MediaPipe samples frames for face positions (per clip)
+  5. Smart Crop: FFmpeg crops to platform aspect ratio centered on face
+  6. Burn Subtitles: FFmpeg overlays word-timed ASS subtitles
+  7. Upload: Results stored to configured storage (local or Supabase Storage)
 
-Each stage is independently callable for debugging and testing.
+For multiple clips, download and transcription happen once. Each clip is
+independently face-detected, cropped, and rendered.
 """
 
 import json
@@ -120,6 +122,256 @@ class ProcessingResult:
     clips: list[ClipResult] = field(default_factory=list)
     transcript: Optional[list[TranscriptSegment]] = None
     error: Optional[str] = None
+
+
+@dataclass
+class ClipSegment:
+    """A ranked clip segment selected from the video."""
+    start_time: float
+    end_time: float
+    rank: int  # 1 = best (most replayed), 2 = second best, etc.
+    score: float  # average heatmap engagement score (0-1)
+
+
+# ── Clip Selection: Heatmap + Transcript ────────────────────────────
+def select_clip_segments(
+    heatmap: Optional[list[dict]],
+    transcript: list[TranscriptSegment],
+    video_duration: float,
+    num_clips: int = 1,
+    min_clip_duration: float = 15.0,
+    max_clip_duration: float = 60.0,
+) -> list[ClipSegment]:
+    """
+    Select the best clip segments using YouTube's "most replayed" heatmap,
+    then snap boundaries to clean transcript sentence starts/ends.
+
+    Algorithm:
+      1. If heatmap available: score each possible window by average heatmap
+         intensity, pick top N non-overlapping windows
+      2. If no heatmap: fall back to evenly-spaced segments
+      3. Snap start/end to the nearest transcript segment boundary so clips
+         begin and end at natural sentence breaks
+
+    Args:
+        heatmap: yt-dlp heatmap data [{start_time, end_time, value}, ...]
+        transcript: Word-level transcript segments
+        video_duration: Total video length in seconds
+        num_clips: How many clips to extract (ranked by engagement)
+        min_clip_duration: Minimum clip length in seconds
+        max_clip_duration: Maximum clip length in seconds
+
+    Returns:
+        List of ClipSegment sorted by rank (1 = most engaging)
+    """
+    if heatmap and len(heatmap) > 0:
+        segments = _select_from_heatmap(
+            heatmap, transcript, video_duration,
+            num_clips, min_clip_duration, max_clip_duration,
+        )
+    else:
+        logger.info("No heatmap data available — falling back to even distribution")
+        segments = _select_evenly_spaced(
+            transcript, video_duration,
+            num_clips, min_clip_duration, max_clip_duration,
+        )
+
+    return segments
+
+
+def _select_from_heatmap(
+    heatmap: list[dict],
+    transcript: list[TranscriptSegment],
+    video_duration: float,
+    num_clips: int,
+    min_clip_duration: float,
+    max_clip_duration: float,
+) -> list[ClipSegment]:
+    """
+    Score sliding windows across the video using heatmap intensity,
+    pick the top N non-overlapping windows, then snap to transcript boundaries.
+    """
+    # Build a list of (time, value) points from the heatmap
+    heatmap_points: list[tuple[float, float]] = []
+    for entry in heatmap:
+        t = entry.get("start_time", 0.0)
+        v = entry.get("value", 0.0)
+        if t is not None and v is not None:
+            heatmap_points.append((float(t), float(v)))
+
+    if not heatmap_points:
+        return _select_evenly_spaced(
+            transcript, video_duration, num_clips,
+            min_clip_duration, max_clip_duration,
+        )
+
+    heatmap_points.sort(key=lambda x: x[0])
+
+    # Score windows of max_clip_duration sliding across the video
+    # Step size = half a heatmap marker duration for decent resolution
+    if len(heatmap_points) >= 2:
+        step = (heatmap_points[1][0] - heatmap_points[0][0]) / 2
+    else:
+        step = 5.0
+    step = max(step, 1.0)  # at least 1s steps
+
+    window_scores: list[tuple[float, float, float]] = []  # (start, end, avg_score)
+
+    t = 0.0
+    while t + min_clip_duration <= video_duration:
+        window_end = min(t + max_clip_duration, video_duration)
+
+        # Average heatmap value within this window
+        values_in_window = [
+            v for (pt, v) in heatmap_points
+            if t <= pt < window_end
+        ]
+
+        if values_in_window:
+            avg_score = sum(values_in_window) / len(values_in_window)
+        else:
+            avg_score = 0.0
+
+        window_scores.append((t, window_end, avg_score))
+        t += step
+
+    # Sort by score descending — highest engagement first
+    window_scores.sort(key=lambda x: x[2], reverse=True)
+
+    # Pick top N non-overlapping windows
+    selected: list[tuple[float, float, float]] = []
+    for (ws, we, score) in window_scores:
+        if len(selected) >= num_clips:
+            break
+        # Check overlap with already-selected segments
+        overlaps = False
+        for (ss, se, _) in selected:
+            if ws < se and we > ss:
+                overlaps = True
+                break
+        if not overlaps:
+            selected.append((ws, we, score))
+
+    # Snap each window to transcript sentence boundaries and build ClipSegments
+    segments: list[ClipSegment] = []
+    for rank, (ws, we, score) in enumerate(selected, start=1):
+        snapped_start, snapped_end = _snap_to_transcript_boundaries(
+            ws, we, transcript, min_clip_duration, max_clip_duration, video_duration,
+        )
+        segments.append(ClipSegment(
+            start_time=snapped_start,
+            end_time=snapped_end,
+            rank=rank,
+            score=score,
+        ))
+
+    logger.info(
+        f"Selected {len(segments)} clip(s) from heatmap: "
+        + ", ".join(f"#{s.rank} {s.start_time:.1f}-{s.end_time:.1f}s (score={s.score:.2f})" for s in segments)
+    )
+
+    return segments
+
+
+def _select_evenly_spaced(
+    transcript: list[TranscriptSegment],
+    video_duration: float,
+    num_clips: int,
+    min_clip_duration: float,
+    max_clip_duration: float,
+) -> list[ClipSegment]:
+    """
+    Fallback: distribute clips evenly across the video when no heatmap is available.
+    Still snaps boundaries to transcript sentences.
+    """
+    clip_duration = min(max_clip_duration, video_duration)
+    # Space clips evenly, avoid overlap
+    if num_clips == 1:
+        starts = [0.0]
+    else:
+        spacing = max(clip_duration, video_duration / num_clips)
+        starts = [i * spacing for i in range(num_clips)]
+        # Clamp so we don't go past the end
+        starts = [s for s in starts if s + min_clip_duration <= video_duration]
+
+    segments: list[ClipSegment] = []
+    for rank, s in enumerate(starts[:num_clips], start=1):
+        e = min(s + clip_duration, video_duration)
+        snapped_start, snapped_end = _snap_to_transcript_boundaries(
+            s, e, transcript, min_clip_duration, max_clip_duration, video_duration,
+        )
+        segments.append(ClipSegment(
+            start_time=snapped_start,
+            end_time=snapped_end,
+            rank=rank,
+            score=0.0,
+        ))
+
+    logger.info(
+        f"Selected {len(segments)} clip(s) (evenly spaced): "
+        + ", ".join(f"#{s.rank} {s.start_time:.1f}-{s.end_time:.1f}s" for s in segments)
+    )
+
+    return segments
+
+
+def _snap_to_transcript_boundaries(
+    raw_start: float,
+    raw_end: float,
+    transcript: list[TranscriptSegment],
+    min_duration: float,
+    max_duration: float,
+    video_duration: float,
+) -> tuple[float, float]:
+    """
+    Snap a raw time window to the nearest transcript segment boundaries
+    so the clip starts at a sentence beginning and ends at a sentence end.
+
+    Searches within a ±5s tolerance window for the closest segment edges.
+    """
+    snap_tolerance = 5.0  # seconds — how far to look for a sentence boundary
+
+    if not transcript:
+        return raw_start, min(raw_end, video_duration)
+
+    # Find the best start: nearest segment.start within tolerance BEFORE raw_start
+    best_start = raw_start
+    best_start_dist = snap_tolerance + 1
+
+    for seg in transcript:
+        dist = abs(seg.start - raw_start)
+        if dist < best_start_dist and dist <= snap_tolerance:
+            best_start = seg.start
+            best_start_dist = dist
+
+    # Find the best end: nearest segment.end within tolerance AFTER raw_end
+    best_end = raw_end
+    best_end_dist = snap_tolerance + 1
+
+    for seg in transcript:
+        dist = abs(seg.end - raw_end)
+        if dist < best_end_dist and dist <= snap_tolerance:
+            best_end = seg.end
+            best_end_dist = dist
+
+    # Enforce duration constraints
+    duration = best_end - best_start
+    if duration < min_duration:
+        best_end = best_start + min_duration
+    if duration > max_duration:
+        best_end = best_start + max_duration
+
+    # Clamp to video bounds
+    best_start = max(0.0, best_start)
+    best_end = min(best_end, video_duration)
+
+    # Final safety: if somehow too short, extend end
+    if best_end - best_start < min_duration:
+        best_end = min(best_start + min_duration, video_duration)
+        if best_end - best_start < min_duration:
+            best_start = max(0.0, best_end - min_duration)
+
+    return best_start, best_end
 
 
 # ── Stage 1: Download ───────────────────────────────────────────────
@@ -650,14 +902,17 @@ def process_viral_clip(
     """
     Full pipeline to process a YouTube video into a viral clip.
 
-    This is the main entry point called by both the local FastAPI server
-    and the Modal.com production wrapper.
+    This is the single-clip entry point. For multiple clips from the same
+    video, use process_viral_clips_batch() instead to avoid re-downloading.
+
+    Uses YouTube's "most replayed" heatmap to select the most engaging
+    segment, snaps boundaries to transcript sentences, then renders.
 
     Args:
         youtube_url: YouTube video URL
         platform: Target platform (tiktok, reels, shorts, linkedin, twitter)
         style: Style preset (minimalist, fast_talker, cinematic)
-        clip_index: Which clip to extract (0-based, for multi-clip requests)
+        clip_index: Which clip to extract (0 = most replayed, 1 = 2nd, etc.)
         work_dir: Working directory (uses temp dir if None)
         whisper_model: Whisper model size
         whisper_device: Device for whisper (cpu, cuda, auto)
@@ -667,19 +922,76 @@ def process_viral_clip(
     Returns:
         ProcessingResult with clip paths and transcript
     """
+    result = process_viral_clips_batch(
+        youtube_url=youtube_url,
+        clip_configs=[{
+            "platform": platform,
+            "style": style,
+            "clip_rank": clip_index,
+        }],
+        num_clips=clip_index + 1,
+        work_dir=work_dir,
+        whisper_model=whisper_model,
+        whisper_device=whisper_device,
+        whisper_compute_type=whisper_compute_type,
+        status_callback=status_callback,
+    )
+    return result
+
+
+def process_viral_clips_batch(
+    youtube_url: str,
+    clip_configs: list[dict],
+    num_clips: int = 1,
+    work_dir: Optional[str] = None,
+    whisper_model: str = "large-v3",
+    whisper_device: str = "auto",
+    whisper_compute_type: str = "auto",
+    status_callback: Optional[Callable[[str], Any]] = None,
+) -> ProcessingResult:
+    """
+    Batch pipeline: download once, transcribe once, select N clips, render each.
+
+    This is the preferred entry point when the user requests multiple clips
+    from the same video. Avoids redundant downloads and transcriptions.
+
+    clip_configs is a list of dicts, each with:
+      - platform: str (tiktok, reels, etc.)
+      - style: str (minimalist, fast_talker, cinematic)
+      - clip_rank: int (0 = most replayed, 1 = 2nd, etc.)
+
+    Args:
+        youtube_url: YouTube video URL
+        clip_configs: List of clip configuration dicts
+        num_clips: Number of unique clip segments to select from heatmap
+        work_dir: Working directory (uses temp dir if None)
+        whisper_model: Whisper model size
+        whisper_device: Device for whisper (cpu, cuda, auto)
+        whisper_compute_type: Compute type for whisper
+        status_callback: Optional callback for progress updates
+
+    Returns:
+        ProcessingResult with all rendered clips and shared transcript
+    """
     cleanup_dir = work_dir is None
     if work_dir is None:
         work_dir = tempfile.mkdtemp(prefix="cremiro_")
 
     try:
-        # Stage 1: Download
+        # Stage 1: Download (once)
         if status_callback:
             status_callback("downloading")
 
         video_path, video_info = download_video(youtube_url, work_dir)
         video_duration = video_info.get("duration", 0)
+        heatmap = video_info.get("heatmap")
 
-        # Stage 2: Transcribe
+        if heatmap:
+            logger.info(f"Heatmap data available: {len(heatmap)} markers")
+        else:
+            logger.info("No heatmap data — will use evenly-spaced fallback")
+
+        # Stage 2: Transcribe (once)
         if status_callback:
             status_callback("transcribing")
 
@@ -690,59 +1002,73 @@ def process_viral_clip(
             compute_type=whisper_compute_type,
         )
 
-        # Stage 3: Detect faces
+        # Stage 3: Select clip segments using heatmap + transcript
         if status_callback:
             status_callback("analyzing")
 
-        # NOTE: Face detection is deferred until after clip selection (below)
+        clip_segments = select_clip_segments(
+            heatmap=heatmap,
+            transcript=transcript,
+            video_duration=video_duration,
+            num_clips=num_clips,
+        )
 
-        # Stage 4: Select clip segment
-        # Simple strategy: divide video into segments and pick by index
-        # A more sophisticated approach would use engagement analysis
-        clip_duration = min(60, video_duration)  # max 60s per clip
-        num_possible_clips = max(1, int(video_duration / clip_duration))
-
-        if clip_index >= num_possible_clips:
-            clip_index = clip_index % num_possible_clips
-
-        start_time = clip_index * clip_duration
-        end_time = min(start_time + clip_duration, video_duration)
-
-        # If the segment is too short, use the last valid segment
-        if end_time - start_time < 5:
-            start_time = max(0, video_duration - clip_duration)
-            end_time = video_duration
-
-        # Detect faces only on the selected clip segment (not the full video)
-        face_positions = detect_faces(video_path, start_time=start_time, end_time=end_time)
-
-        # Stage 5: Generate subtitles
+        # Stage 4: Render each clip config against the selected segments
         if status_callback:
             status_callback("rendering")
 
-        resolution = PLATFORM_RESOLUTIONS.get(platform, (1080, 1920))
-        subtitle_path = os.path.join(work_dir, f"clip_{clip_index}_{platform}.ass")
-        generate_ass_subtitles(
-            transcript, subtitle_path,
-            start_time, end_time,
-            style_name=style,
-            resolution=resolution,
-        )
+        all_clips: list[ClipResult] = []
 
-        # Stage 6: Render clip with smart crop + subtitles
-        output_path = os.path.join(work_dir, f"clip_{clip_index}_{platform}.mp4")
-        clip_result = render_clip(
-            video_path, output_path,
-            start_time, end_time,
-            platform, face_positions,
-            subtitle_path=subtitle_path,
-        )
+        for config in clip_configs:
+            platform = config.get("platform", "tiktok")
+            style = config.get("style", "minimalist")
+            clip_rank = config.get("clip_rank", 0)
+
+            # Pick the segment for this clip's rank
+            if clip_rank < len(clip_segments):
+                segment = clip_segments[clip_rank]
+            else:
+                # More clips requested than segments available — wrap around
+                segment = clip_segments[clip_rank % len(clip_segments)]
+
+            start_time = segment.start_time
+            end_time = segment.end_time
+
+            # Detect faces on this specific segment
+            face_positions = detect_faces(
+                video_path, start_time=start_time, end_time=end_time,
+            )
+
+            # Generate subtitles for this segment
+            resolution = PLATFORM_RESOLUTIONS.get(platform, (1080, 1920))
+            subtitle_path = os.path.join(
+                work_dir, f"clip_{clip_rank}_{platform}.ass",
+            )
+            generate_ass_subtitles(
+                transcript, subtitle_path,
+                start_time, end_time,
+                style_name=style,
+                resolution=resolution,
+            )
+
+            # Render clip with smart crop + subtitles
+            output_path = os.path.join(
+                work_dir, f"clip_{clip_rank}_{platform}.mp4",
+            )
+            clip_result = render_clip(
+                video_path, output_path,
+                start_time, end_time,
+                platform, face_positions,
+                subtitle_path=subtitle_path,
+            )
+
+            all_clips.append(clip_result)
 
         if status_callback:
             status_callback("completed")
 
         return ProcessingResult(
-            clips=[clip_result],
+            clips=all_clips,
             transcript=transcript,
         )
 
