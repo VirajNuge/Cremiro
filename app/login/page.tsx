@@ -105,40 +105,15 @@ function LoginForm() {
                 objectPosition: "center",
               }}
             />
-            {/* Dark overlay for text legibility */}
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                background: "linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.5) 100%)",
-              }}
-            />
             {/* Logo */}
             <Link href="/" style={{ position: "absolute", top: "2rem", left: "2rem", zIndex: 10 }}>
               <span
                 className="text-2xl font-bold cursor-pointer"
-                style={{ color: "#ffffff", textShadow: "0 1px 4px rgba(0,0,0,0.4)" }}
+                style={{ color: "#ffffff", textShadow: "0 1px 6px rgba(0,0,0,0.6)" }}
               >
                 Cremiro
               </span>
             </Link>
-            {/* Tagline */}
-            <div
-              style={{
-                position: "absolute",
-                bottom: "2.5rem",
-                left: 0,
-                right: 0,
-                textAlign: "center",
-                zIndex: 10,
-                padding: "0 2rem",
-              }}
-            >
-              <p className="text-sm font-semibold" style={{ color: "rgba(255,255,255,0.95)", textShadow: "0 1px 3px rgba(0,0,0,0.5)" }}>
-                Transform YouTube into powerful content
-              </p>
-              <p className="text-xs mt-1" style={{ color: "rgba(255,255,255,0.7)" }}>Fast, secure, and beautifully simple.</p>
-            </div>
           </div>
 
           {/* Right Side - Form */}
@@ -205,7 +180,7 @@ function LoginForm() {
                     required
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm"
                     style={{ focusRing: "#fd6333" } as any}
-                    placeholder="username"
+                    placeholder="you@example.com"
                     disabled={loading}
                   />
                 </div>
