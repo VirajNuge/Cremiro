@@ -26,11 +26,14 @@ import tempfile
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core.processor import (
@@ -53,6 +56,15 @@ WEBHOOK_SECRET = os.getenv("WORKER_WEBHOOK_SECRET", "")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")  # Use 'base' for local dev (faster)
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+WORKER_PORT = int(os.getenv("WORKER_PORT", "8000"))
+# Base URL this worker is reachable at — used to build public output URLs.
+# Override with your Ngrok URL when testing externally.
+WORKER_BASE_URL = os.getenv("WORKER_BASE_URL", f"http://localhost:{WORKER_PORT}")
+
+# Persistent directory that stores rendered output files.
+# Files survive between requests so the frontend can fetch/download them.
+OUTPUTS_DIR = Path(os.getenv("OUTPUTS_DIR", "./outputs")).resolve()
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
 if not WEBHOOK_SECRET:
     logger.warning("WORKER_WEBHOOK_SECRET not set — webhook callbacks will fail!")
@@ -192,20 +204,26 @@ async def process_job_item(
                 )
                 return
 
-            # For MVP: output the clip path (production would upload to Supabase Storage)
-            output_refs = [clip.output_path for clip in result.clips]
-            output_data = {
-                "clips": [
-                    {
-                        "path": clip.output_path,
-                        "duration": clip.duration,
-                        "platform": clip.platform,
-                        "width": clip.width,
-                        "height": clip.height,
-                    }
-                    for clip in result.clips
-                ],
-            }
+            # Copy rendered clips into the persistent outputs directory and
+            # build public HTTP URLs so the browser can preview / download them.
+            output_refs: list[str] = []
+            clips_meta = []
+            for clip in result.clips:
+                filename = f"{job_item.id}_{clip.platform}.mp4"
+                dest = OUTPUTS_DIR / filename
+                shutil.copy2(clip.output_path, dest)
+                public_url = f"{WORKER_BASE_URL}/outputs/{filename}"
+                output_refs.append(public_url)
+                clips_meta.append({
+                    "url": public_url,
+                    "duration": clip.duration,
+                    "platform": clip.platform,
+                    "width": clip.width,
+                    "height": clip.height,
+                })
+                logger.info(f"Output available at: {public_url}")
+
+            output_data = {"clips": clips_meta}
 
             await send_callback(
                 callback_url, job_item.id, "completed",
@@ -300,6 +318,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Serve rendered output files — browser fetches video directly from here.
+app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
+
 
 @app.get("/health")
 async def health_check():
@@ -362,11 +383,10 @@ async def process_request(
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("WORKER_PORT", "8000"))
     uvicorn.run(
         "local_server:app",
         host="0.0.0.0",
-        port=port,
+        port=WORKER_PORT,
         reload=True,
         log_level="info",
     )
