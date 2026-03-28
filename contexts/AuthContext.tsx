@@ -17,6 +17,7 @@ export type AuthUser = {
   first_name?: string | null
   last_name?: string | null
   full_name?: string | null
+  credits_balance?: number
 }
 
 type AuthContextType = {

@@ -1,7 +1,8 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { useState, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 /* ------------------------------------------------------------------ */
 /*  YouTube URL Validation                                             */
@@ -167,6 +168,44 @@ const STYLE_PRESETS = [
 ];
 
 /* ------------------------------------------------------------------ */
+/*  Job Status Types                                                   */
+/* ------------------------------------------------------------------ */
+
+type JobStatus = "pending" | "processing" | "completed" | "failed";
+
+interface JobItem {
+  id: string;
+  job_type: string;
+  status: JobStatus;
+  platform: string | null;
+  output_data: Record<string, unknown> | null;
+  output_refs: string[] | null;
+  error_message: string | null;
+}
+
+interface GenerateState {
+  submitting: boolean;
+  requestId: string | null;
+  jobItems: JobItem[];
+  error: string | null;
+  creditsAfter: number | null;
+}
+
+const STATUS_LABELS: Record<JobStatus, string> = {
+  pending: "Queued",
+  processing: "Processing",
+  completed: "Done",
+  failed: "Failed",
+};
+
+const STATUS_COLORS: Record<JobStatus, string> = {
+  pending: "#9ca3af",
+  processing: "#fd6333",
+  completed: "#22c55e",
+  failed: "#ef4444",
+};
+
+/* ------------------------------------------------------------------ */
 /*  Icons                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -228,6 +267,63 @@ export default function GeneratePanel() {
   // Platform selection & style (only for video clips)
   const [selectedPlatforms, setSelectedPlatforms] = useState<Record<string, boolean>>({});
   const [style, setStyle] = useState<string>("minimalist");
+
+  // Generation state
+  const [genState, setGenState] = useState<GenerateState>({
+    submitting: false,
+    requestId: null,
+    jobItems: [],
+    error: null,
+    creditsAfter: null,
+  });
+
+  const supabaseRef = useRef(createClient());
+
+  // ── Realtime subscription for job status updates ──
+  useEffect(() => {
+    if (!genState.requestId || genState.jobItems.length === 0) return;
+
+    const supabase = supabaseRef.current;
+    const jobItemIds = genState.jobItems.map((j) => j.id);
+
+    const channel = supabase
+      .channel(`job_items_${genState.requestId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "job_items",
+          filter: `request_id=eq.${genState.requestId}`,
+        },
+        (payload) => {
+          const updated = payload.new as Record<string, unknown>;
+          const updatedId = updated.id as string;
+
+          if (!jobItemIds.includes(updatedId)) return;
+
+          setGenState((prev) => ({
+            ...prev,
+            jobItems: prev.jobItems.map((item) =>
+              item.id === updatedId
+                ? {
+                    ...item,
+                    status: updated.status as JobStatus,
+                    output_data: (updated.output_data as Record<string, unknown>) ?? null,
+                    output_refs: (updated.output_refs as string[]) ?? null,
+                    error_message: (updated.error_message as string) ?? null,
+                  }
+                : item
+            ),
+          }));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [genState.requestId, genState.jobItems.length]);
 
   // URL handlers
   const handleUrlChange = (value: string) => {
@@ -294,10 +390,83 @@ export default function GeneratePanel() {
     setSelectedPlatforms((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const handleGenerate = () => {
-    // Placeholder — backend integration pending
-    alert("Generation queued. Backend integration coming soon.");
-  };
+  const handleGenerate = useCallback(async () => {
+    if (!canGenerate) return;
+
+    setGenState({
+      submitting: true,
+      requestId: null,
+      jobItems: [],
+      error: null,
+      creditsAfter: null,
+    });
+
+    // Build the items payload matching server validation
+    const items = Object.entries(selectedTypes).map(([key, qty]) => {
+      const item: Record<string, unknown> = {
+        job_type: key,
+        quantity: qty,
+      };
+
+      if (key === "viral_clip") {
+        item.platforms = Object.entries(selectedPlatforms)
+          .filter(([, active]) => active)
+          .map(([k]) => k);
+        item.style = style;
+      }
+
+      return item;
+    });
+
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          youtubeUrl: youtubeUrl.trim(),
+          items,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setGenState((prev) => ({
+          ...prev,
+          submitting: false,
+          error: data.error || "An unexpected error occurred.",
+        }));
+        return;
+      }
+
+      // Build initial job items from IDs
+      const jobItemIds: string[] = data.job_item_ids ?? [];
+      const initialJobItems: JobItem[] = jobItemIds.map((id: string, i: number) => ({
+        id,
+        job_type: items[0]?.job_type as string ?? "unknown",
+        status: "pending" as JobStatus,
+        platform: null,
+        output_data: null,
+        output_refs: null,
+        error_message: null,
+      }));
+
+      setGenState({
+        submitting: false,
+        requestId: data.request_id,
+        jobItems: initialJobItems,
+        error: null,
+        creditsAfter: data.balance_after ?? null,
+      });
+    } catch {
+      setGenState((prev) => ({
+        ...prev,
+        submitting: false,
+        error: "Network error. Please check your connection and try again.",
+      }));
+    }
+  }, [canGenerate, youtubeUrl, selectedTypes, selectedPlatforms, style]);
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-8">
@@ -601,15 +770,26 @@ export default function GeneratePanel() {
         <button
           type="button"
           onClick={handleGenerate}
-          disabled={!canGenerate}
+          disabled={!canGenerate || genState.submitting}
           className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-semibold text-white text-[15px] transition-all hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ backgroundColor: "#fd6333" }}
         >
-          <IconZap className="w-[18px] h-[18px]" />
-          Generate Content
+          {genState.submitting ? (
+            <>
+              <div
+                className="w-[18px] h-[18px] border-2 border-white/30 border-t-white rounded-full animate-spin"
+              />
+              Submitting...
+            </>
+          ) : (
+            <>
+              <IconZap className="w-[18px] h-[18px]" />
+              Generate Content
+            </>
+          )}
         </button>
 
-        {!canGenerate && (
+        {!canGenerate && !genState.submitting && (
           <p className="text-[12px] text-gray-400 text-center mt-2">
             {!urlValid && selectedCount === 0
               ? "Enter a YouTube URL and select at least one content type."
@@ -623,6 +803,193 @@ export default function GeneratePanel() {
           </p>
         )}
       </motion.div>
+
+      {/* ── Error Display ── */}
+      <AnimatePresence>
+        {genState.error && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.25 }}
+            className="bg-red-50 border border-red-200 rounded-2xl p-4 mt-6 flex items-start gap-3"
+          >
+            <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="15" y1="9" x2="9" y2="15" />
+              <line x1="9" y1="9" x2="15" y2="15" />
+            </svg>
+            <div className="flex-1 min-w-0">
+              <p className="text-[13px] font-semibold text-red-700">Generation failed</p>
+              <p className="text-[12px] text-red-600 mt-0.5">{genState.error}</p>
+            </div>
+            <button
+              onClick={() => setGenState((prev) => ({ ...prev, error: null }))}
+              className="text-red-400 hover:text-red-600 flex-shrink-0"
+              aria-label="Dismiss error"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Job Status Progress ── */}
+      <AnimatePresence>
+        {genState.requestId && genState.jobItems.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.35 }}
+            className="bg-white rounded-2xl p-5 border border-gray-100/80 mt-6"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-[15px] font-semibold" style={{ color: "#16423c" }}>
+                Processing Jobs
+              </h2>
+              {genState.creditsAfter !== null && (
+                <span className="text-[12px] text-gray-400">
+                  Balance after: <span className="font-semibold" style={{ color: "#16423c" }}>{genState.creditsAfter.toLocaleString()}</span> credits
+                </span>
+              )}
+            </div>
+
+            {/* Progress bar */}
+            {(() => {
+              const total = genState.jobItems.length;
+              const done = genState.jobItems.filter((j) => j.status === "completed" || j.status === "failed").length;
+              const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+              return (
+                <div className="mb-4">
+                  <div className="flex items-center justify-between text-[11px] text-gray-400 mb-1">
+                    <span>{done} of {total} complete</span>
+                    <span>{pct}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full rounded-full"
+                      style={{ backgroundColor: "#fd6333" }}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${pct}%` }}
+                      transition={{ duration: 0.4, ease: "easeOut" }}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Job item list */}
+            <div className="space-y-2">
+              {genState.jobItems.map((job, idx) => {
+                const ct = CONTENT_TYPES.find((c) => c.key === job.job_type);
+                const statusColor = STATUS_COLORS[job.status];
+                const statusLabel = STATUS_LABELS[job.status];
+
+                return (
+                  <motion.div
+                    key={job.id}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.05 * idx, duration: 0.25 }}
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl border border-gray-100 bg-gray-50/50"
+                  >
+                    {/* Status indicator */}
+                    <div className="flex-shrink-0">
+                      {job.status === "processing" ? (
+                        <div
+                          className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
+                          style={{ borderColor: statusColor, borderTopColor: "transparent" }}
+                        />
+                      ) : job.status === "completed" ? (
+                        <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: statusColor }}>
+                          <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        </div>
+                      ) : job.status === "failed" ? (
+                        <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: statusColor }}>
+                          <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </div>
+                      ) : (
+                        <div
+                          className="w-5 h-5 rounded-full border-2"
+                          style={{ borderColor: statusColor }}
+                        />
+                      )}
+                    </div>
+
+                    {/* Job info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-medium" style={{ color: "#16423c" }}>
+                        {ct?.label ?? job.job_type}
+                        {job.platform && (
+                          <span className="text-gray-400 font-normal ml-1.5">
+                            / {job.platform}
+                          </span>
+                        )}
+                      </p>
+                      {job.error_message && (
+                        <p className="text-[11px] text-red-500 mt-0.5 truncate">
+                          {job.error_message}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Status badge */}
+                    <span
+                      className="text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                      style={{
+                        color: statusColor,
+                        backgroundColor: `${statusColor}14`,
+                      }}
+                    >
+                      {statusLabel}
+                    </span>
+                  </motion.div>
+                );
+              })}
+            </div>
+
+            {/* New Generation button (when all done) */}
+            {genState.jobItems.length > 0 &&
+              genState.jobItems.every((j) => j.status === "completed" || j.status === "failed") && (
+              <motion.button
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2, duration: 0.3 }}
+                type="button"
+                onClick={() => {
+                  setGenState({
+                    submitting: false,
+                    requestId: null,
+                    jobItems: [],
+                    error: null,
+                    creditsAfter: null,
+                  });
+                  setYoutubeUrl("");
+                  setUrlValid(false);
+                  setUrlError(null);
+                  setSelectedTypes({});
+                  setSelectedPlatforms({});
+                  setStyle("minimalist");
+                }}
+                className="w-full mt-4 flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-[14px] border-2 transition-all hover:bg-gray-50"
+                style={{ borderColor: "#fd6333", color: "#fd6333" }}
+              >
+                <IconZap className="w-4 h-4" />
+                New Generation
+              </motion.button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -18,7 +18,7 @@ export async function GET() {
   // Fetch profile from profiles table
   const { data: profile } = await supabase
     .from("profiles")
-    .select("username, first_name, last_name, full_name")
+    .select("username, first_name, last_name, full_name, credits_balance")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -41,6 +41,7 @@ export async function GET() {
       first_name: profile?.first_name ?? null,
       last_name: profile?.last_name ?? null,
       full_name: profile?.full_name ?? (user.user_metadata?.full_name as string) ?? null,
+      credits_balance: profile?.credits_balance ?? 0,
     },
   });
 }

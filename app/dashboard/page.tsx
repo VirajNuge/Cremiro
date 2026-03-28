@@ -366,7 +366,7 @@ export default function DashboardPage() {
           <span style={{ color: "#fd6333" }}>
             <IconCredits className="w-3.5 h-3.5" />
           </span>
-          <span className="text-[12px] font-bold" style={{ color: "#16423c" }}>1,000</span>
+          <span className="text-[12px] font-bold" style={{ color: "#16423c" }}>{(user.credits_balance ?? 0).toLocaleString()}</span>
           <span className="text-[11px] text-gray-400">tokens remaining</span>
         </div>
       </div>
@@ -538,7 +538,7 @@ export default function DashboardPage() {
                 <IconCredits className="w-3.5 h-3.5" />
               </span>
               <span className="text-[13px] font-bold" style={{ color: "#16423c" }}>
-                1,000
+                {(user.credits_balance ?? 0).toLocaleString()}
               </span>
               <span className="text-[12px] text-gray-400 font-medium">Credits</span>
             </motion.div>
