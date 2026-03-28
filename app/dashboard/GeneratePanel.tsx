@@ -550,16 +550,19 @@ export default function GeneratePanel() {
             const qty = selectedTypes[ct.key] ?? 1;
 
             return (
-              <motion.button
+              <motion.div
                 key={ct.key}
-                type="button"
                 initial={{ opacity: 0, y: 14 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.08 * i, duration: 0.35 }}
                 whileHover={{ y: -2, boxShadow: "0 8px 24px rgba(0,0,0,0.06)" }}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => toggleType(ct.key)}
-                className={`rounded-2xl p-4 text-left w-full cursor-pointer transition-all duration-150 ${
+                role="checkbox"
+                aria-checked={isSelected}
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggleType(ct.key); } }}
+                className={`rounded-2xl p-4 text-left w-full cursor-pointer transition-all duration-150 select-none ${
                   isSelected
                     ? "border-2 shadow-sm bg-white"
                     : "border border-gray-200 bg-white hover:border-gray-300"
@@ -635,7 +638,7 @@ export default function GeneratePanel() {
                     </button>
                   </div>
                 )}
-              </motion.button>
+              </motion.div>
             );
           })}
         </div>
