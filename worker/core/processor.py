@@ -47,28 +47,28 @@ PLATFORM_RESOLUTIONS: dict[str, tuple[int, int]] = {
 STYLE_CONFIGS: dict[str, dict] = {
     "minimalist": {
         "font_name": "Arial",
-        "font_size": 42,
+        "font_size": 58,
         "primary_color": "&H00FFFFFF",  # white
         "outline_color": "&H00000000",  # black
-        "outline_width": 2,
+        "outline_width": 3,
         "bold": False,
         "position": "bottom",  # subtitle position
     },
     "fast_talker": {
         "font_name": "Impact",
-        "font_size": 52,
+        "font_size": 68,
         "primary_color": "&H0000FFFF",  # yellow
         "outline_color": "&H00000000",  # black
-        "outline_width": 3,
+        "outline_width": 4,
         "bold": True,
         "position": "center",
     },
     "cinematic": {
         "font_name": "Georgia",
-        "font_size": 38,
+        "font_size": 52,
         "primary_color": "&H00FFFFFF",  # white
         "outline_color": "&H00000000",  # black
-        "outline_width": 1,
+        "outline_width": 2,
         "bold": False,
         "position": "bottom",
     },
@@ -271,6 +271,8 @@ def transcribe_video(
 # ── Stage 3: Face Detection ─────────────────────────────────────────
 def detect_faces(
     video_path: str,
+    start_time: float = 0.0,
+    end_time: Optional[float] = None,
     sample_interval: float = 4.0,  # sample every N seconds
     max_samples: int = 150,
 ) -> list[FacePosition]:
@@ -278,8 +280,13 @@ def detect_faces(
     Detect face positions by sampling frames at regular intervals.
     Uses MediaPipe Face Detection for lightweight, accurate tracking.
 
+    Only samples frames within [start_time, end_time] so face detection
+    runs on the clip segment only — not the entire source video.
+
     Args:
         video_path: Path to the video file
+        start_time: Start of the segment to analyze (seconds)
+        end_time: End of the segment to analyze (seconds, None = end of video)
         sample_interval: Seconds between frame samples
         max_samples: Maximum number of frames to sample
 
@@ -289,7 +296,7 @@ def detect_faces(
     import cv2
     import mediapipe as mp
 
-    logger.info(f"Detecting faces (sample every {sample_interval}s)")
+    logger.info(f"Detecting faces (sample every {sample_interval}s, range {start_time:.1f}s-{end_time or 'end'}s)")
 
     mp_face_detection = mp.solutions.face_detection
     face_detection = mp_face_detection.FaceDetection(
@@ -305,11 +312,18 @@ def detect_faces(
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_interval = int(fps * sample_interval)
 
+    # Start from the clip's start_time, not frame 0
+    start_frame = int(start_time * fps)
+    end_frame = int(end_time * fps) if end_time else total_frames
+
     positions: list[FacePosition] = []
-    frame_idx = 0
+    frame_idx = start_frame
     samples_taken = 0
 
     while cap.isOpened() and samples_taken < max_samples:
+        if frame_idx >= end_frame or frame_idx >= total_frames:
+            break
+
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame = cap.read()
 
@@ -344,9 +358,6 @@ def detect_faces(
 
         frame_idx += frame_interval
         samples_taken += 1
-
-        if frame_idx >= total_frames:
-            break
 
     cap.release()
     face_detection.close()
@@ -553,9 +564,14 @@ def render_clip(
         crop_w = src_w
         crop_h = int(src_w / target_ratio)
 
-    # Get average face position for the clip duration
-    mid_time = (start_time + end_time) / 2
-    face_cx, face_cy = interpolate_face_position(face_positions, mid_time)
+    # Get average face position across the entire clip duration
+    # (more stable centering than a single midpoint sample)
+    clip_faces = [p for p in face_positions if start_time <= p.timestamp <= end_time]
+    if clip_faces:
+        face_cx = sum(p.center_x for p in clip_faces) / len(clip_faces)
+        face_cy = sum(p.center_y for p in clip_faces) / len(clip_faces)
+    else:
+        face_cx, face_cy = 0.5, 0.5  # fallback to frame center
 
     # Calculate crop position centered on face
     crop_x = int(face_cx * src_w - crop_w / 2)
@@ -678,7 +694,7 @@ def process_viral_clip(
         if status_callback:
             status_callback("analyzing")
 
-        face_positions = detect_faces(video_path)
+        # NOTE: Face detection is deferred until after clip selection (below)
 
         # Stage 4: Select clip segment
         # Simple strategy: divide video into segments and pick by index
@@ -696,6 +712,9 @@ def process_viral_clip(
         if end_time - start_time < 5:
             start_time = max(0, video_duration - clip_duration)
             end_time = video_duration
+
+        # Detect faces only on the selected clip segment (not the full video)
+        face_positions = detect_faces(video_path, start_time=start_time, end_time=end_time)
 
         # Stage 5: Generate subtitles
         if status_callback:
