@@ -37,6 +37,24 @@ nul
 
 # worker secrets (cookies contain session tokens)
 worker/cookies.txt
+worker/*.txt
+worker/*cookies*
+
+# worker runtime artifacts
+worker/.venv/
+worker/outputs/
+worker/__pycache__/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# agent planning files (local only)
+.sisyphus/
+
+# Windows artifacts
+%TEMP%/
+nul
+worker/nul
 
 # vercel
 .vercel
