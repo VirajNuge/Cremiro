@@ -15,6 +15,9 @@ faster-whisper==1.1.0
 # Face Detection
 mediapipe==0.10.21
 
+# Scene Detection
+scenedetect[opencv]<0.7
+
 # Image Processing (for thumbnails/AI images)
 Pillow==11.1.0
 

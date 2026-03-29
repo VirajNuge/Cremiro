@@ -36,7 +36,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from core.processor import (
+from core.pipeline import (
     process_blog_post,
     process_social_text,
     process_viral_clip,
