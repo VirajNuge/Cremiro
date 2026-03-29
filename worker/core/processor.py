@@ -411,7 +411,6 @@ def download_video(
         "--merge-output-format", "mp4",
         "--output", output_template,
         "--print-json",
-        "--no-warnings",
         "--match-filter", f"duration<={max_duration}",
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "--concurrent-fragments", "4",
@@ -428,6 +427,7 @@ def download_video(
 
     if result.returncode != 0:
         error_msg = result.stderr.strip() or "Download failed"
+        logger.error(f"yt-dlp failed (exit {result.returncode}):\n{error_msg}")
         # Sanitize error — don't leak internal paths
         if "is not a valid URL" in error_msg or "Unsupported URL" in error_msg:
             raise ValueError("Invalid or unsupported YouTube URL.")
@@ -437,8 +437,12 @@ def download_video(
             raise ValueError(f"Video exceeds maximum duration of {max_duration // 60} minutes.")
         raise RuntimeError(f"Video download failed. Please try again.")
 
-    # Parse video info from JSON output
-    video_info = json.loads(result.stdout.strip().split("\n")[-1])
+    # Parse video info from JSON output — filter for JSON lines only (yt-dlp
+    # may mix warnings/progress lines with the final JSON object)
+    json_lines = [ln for ln in result.stdout.splitlines() if ln.strip().startswith("{")]
+    if not json_lines:
+        raise RuntimeError("yt-dlp produced no JSON output — cannot read video metadata.")
+    video_info = json.loads(json_lines[-1])
 
     # Find the downloaded file
     video_path = os.path.join(output_dir, f"source.mp4")

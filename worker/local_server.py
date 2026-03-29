@@ -174,6 +174,17 @@ async def send_callback(
 
 
 # ── Background Processing ──────────────────────────────────────────
+
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Log any unhandled exception from a fire-and-forget background task."""
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    if exc:
+        logger.error(f"Background task {task.get_name()} crashed: {exc}", exc_info=exc)
+
+
 async def process_viral_clip_batch(
     clip_jobs: list[JobItemPayload],
     youtube_url: str,
@@ -208,14 +219,21 @@ async def process_viral_clip_batch(
         max_rank = max(c["clip_rank"] for c in clip_configs) + 1
 
         # Run the batch pipeline (download once, transcribe once)
-        result = process_viral_clips_batch(
-            youtube_url=youtube_url,
-            clip_configs=clip_configs,
-            num_clips=max_rank,
-            work_dir=work_dir,
-            whisper_model=WHISPER_MODEL,
-            whisper_device=WHISPER_DEVICE,
-            whisper_compute_type=WHISPER_COMPUTE_TYPE,
+        # This is a sync/CPU-heavy function — run in a thread to avoid
+        # blocking the async event loop (which would freeze health checks
+        # and prevent callbacks from being sent).
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: process_viral_clips_batch(
+                youtube_url=youtube_url,
+                clip_configs=clip_configs,
+                num_clips=max_rank,
+                work_dir=work_dir,
+                whisper_model=WHISPER_MODEL,
+                whisper_device=WHISPER_DEVICE,
+                whisper_compute_type=WHISPER_COMPUTE_TYPE,
+            ),
         )
 
         if result.error:
@@ -283,12 +301,16 @@ async def process_job_item(
         await send_callback(callback_url, job_item.id, "processing")
 
         if job_item.job_type == "social_text":
-            result = process_social_text(
-                youtube_url=youtube_url,
-                work_dir=work_dir,
-                whisper_model=WHISPER_MODEL,
-                whisper_device=WHISPER_DEVICE,
-                whisper_compute_type=WHISPER_COMPUTE_TYPE,
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: process_social_text(
+                    youtube_url=youtube_url,
+                    work_dir=work_dir,
+                    whisper_model=WHISPER_MODEL,
+                    whisper_device=WHISPER_DEVICE,
+                    whisper_compute_type=WHISPER_COMPUTE_TYPE,
+                ),
             )
 
             if "error" in result:
@@ -304,12 +326,16 @@ async def process_job_item(
             )
 
         elif job_item.job_type == "blog_post":
-            result = process_blog_post(
-                youtube_url=youtube_url,
-                work_dir=work_dir,
-                whisper_model=WHISPER_MODEL,
-                whisper_device=WHISPER_DEVICE,
-                whisper_compute_type=WHISPER_COMPUTE_TYPE,
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: process_blog_post(
+                    youtube_url=youtube_url,
+                    work_dir=work_dir,
+                    whisper_model=WHISPER_MODEL,
+                    whisper_device=WHISPER_DEVICE,
+                    whisper_compute_type=WHISPER_COMPUTE_TYPE,
+                ),
             )
 
             if "error" in result:
@@ -424,14 +450,16 @@ async def process_request(
     other_jobs = [j for j in payload.job_items if j.job_type != "viral_clip"]
 
     if clip_jobs:
-        asyncio.create_task(
+        task = asyncio.create_task(
             process_viral_clip_batch(clip_jobs, payload.youtube_url, payload.callback_url)
         )
+        task.add_done_callback(_log_task_exception)
 
     for job_item in other_jobs:
-        asyncio.create_task(
+        task = asyncio.create_task(
             process_job_item(job_item, payload.youtube_url, payload.callback_url)
         )
+        task.add_done_callback(_log_task_exception)
 
     return {
         "status": "accepted",

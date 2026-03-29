@@ -35,6 +35,9 @@ nul
 .env*.local
 .env
 
+# worker secrets (cookies contain session tokens)
+worker/cookies.txt
+
 # vercel
 .vercel
 
