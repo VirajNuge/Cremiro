@@ -7,7 +7,7 @@ httpx==0.28.1
 requests==2.33.0
 
 # Video Processing
-yt-dlp==2025.1.15
+yt-dlp>=2026.3.17
 
 # Speech-to-Text
 faster-whisper==1.1.0

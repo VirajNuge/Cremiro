@@ -402,7 +402,7 @@ def download_video(
         logger.info(f"Using cookies from browser: {cookies_browser}")
     else:
         cookies_args = []
-        logger.warning("No cookies configured — YouTube may throttle or block downloads")
+        logger.info("No cookies configured — downloading without authentication")
 
     cmd = [
         "yt-dlp",
