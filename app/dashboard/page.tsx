@@ -188,19 +188,25 @@ function NavItem({
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-150 ${
+      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-150 ${
         active
-          ? "text-white shadow-sm"
+          ? "text-white"
           : danger
-          ? "text-gray-400 hover:text-red-500 hover:bg-red-50/60"
-          : "text-gray-500 hover:text-gray-800 hover:bg-gray-100/80"
+          ? "hover:bg-red-50/60"
+          : "hover:bg-gray-100/80"
       }`}
-      style={active ? { backgroundColor: "#fd6333" } : undefined}
+      style={
+        active
+          ? { backgroundColor: "#fd6333", boxShadow: "0 2px 12px rgba(253,99,51,0.25)" }
+          : undefined
+      }
     >
-      <span className={active ? "text-white" : danger ? "inherit" : "text-gray-400"}>
+      <span style={{ color: active ? "#fff" : danger ? "#f87171" : "#9ca3af" }}>
         {icon}
       </span>
-      {label}
+      <span style={{ color: active ? "#fff" : danger ? "#ef4444" : "#6b7280" }}>
+        {label}
+      </span>
     </button>
   );
 }
@@ -253,29 +259,24 @@ function FeatureCard({
 function OAuthBanner() {
   return (
     <div
-      className="mx-3 mb-3 rounded-xl p-4 relative overflow-hidden"
-      style={{
-        background: "linear-gradient(135deg, #fd6333 0%, #16423c 100%)",
-      }}
+      className="mx-3 mb-4 rounded-2xl p-4 relative overflow-hidden border border-gray-100"
+      style={{ backgroundColor: "#f9fafb" }}
     >
-      {/* subtle decorative circle */}
+      {/* decorative glow */}
       <div
-        className="absolute -top-4 -right-4 w-20 h-20 rounded-full opacity-10"
-        style={{ backgroundColor: "#ffffff" }}
-      />
-      <div
-        className="absolute -bottom-6 -left-3 w-16 h-16 rounded-full opacity-10"
-        style={{ backgroundColor: "#ffffff" }}
+        className="absolute -top-6 -right-6 w-24 h-24 rounded-full opacity-20 blur-xl"
+        style={{ backgroundColor: "#fd6333" }}
       />
 
-      <p className="text-[11px] font-bold text-white/90 uppercase tracking-widest mb-1 relative z-10">
+      <p className="text-[10px] font-bold uppercase tracking-widest mb-1.5 relative z-10" style={{ color: "#fd6333" }}>
         · cremiro
       </p>
-      <p className="text-[12px] text-white/80 leading-snug mb-3 relative z-10">
+      <p className="text-[12px] leading-snug mb-3 relative z-10 text-gray-400">
         Connect your social platforms to start publishing generated content.
       </p>
       <button
-        className="w-full flex items-center justify-center gap-1.5 bg-white/15 hover:bg-white/25 border border-white/20 text-white text-[12px] font-semibold rounded-lg py-1.5 transition-all duration-150 relative z-10"
+        className="w-full flex items-center justify-center gap-1.5 border text-[12px] font-semibold rounded-xl py-2 transition-all duration-150 relative z-10 hover:bg-[#fd63330a]"
+        style={{ borderColor: "#fd633330", color: "#fd6333" }}
       >
         <IconLink className="w-3.5 h-3.5" />
         Enable OAuth
@@ -333,17 +334,25 @@ export default function DashboardPage() {
     <div className="flex flex-col h-full select-none">
 
       {/* ── Logo ── */}
-      <div className="px-4 pt-5 pb-4">
-        <span className="text-[17px] font-bold tracking-tight" style={{ color: "#16423c" }}>
+      <div className="px-4 pt-5 pb-4 flex items-center gap-2.5">
+        <div
+          className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: "#fd6333" }}
+        >
+          <IconGenerate className="w-4 h-4 text-white" />
+        </div>
+        <span className="text-[16px] font-bold tracking-tight" style={{ color: "#16423c" }}>
           Cremiro
         </span>
       </div>
 
       {/* ── User Pill ── */}
-      <div className="px-3 mb-3">
-        <div className="w-full flex items-center gap-2.5 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2">
+      <div className="px-3 mb-4">
+        <div
+          className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2.5 border border-gray-100 bg-gray-50/80"
+        >
           <div className="relative flex-shrink-0">
-            <UserAvatar user={user} size={32} />
+            <UserAvatar user={user} size={30} />
             {/* online indicator */}
             <span
               className="absolute bottom-0 right-0 w-2 h-2 rounded-full border-2 border-white"
@@ -355,19 +364,26 @@ export default function DashboardPage() {
               {user.full_name || user.email}
             </p>
             {user.username ? (
-              <p className="text-[11px] text-gray-400 truncate leading-tight">@{user.username}</p>
+              <p className="text-[11px] truncate leading-tight text-gray-400">@{user.username}</p>
             ) : (
-              <p className="text-[11px] text-gray-400 leading-tight">Online</p>
+              <p className="text-[11px] leading-tight text-gray-400">Online</p>
             )}
           </div>
         </div>
-        {/* Token count */}
-        <div className="flex items-center gap-1.5 mt-2 px-1">
-          <span style={{ color: "#fd6333" }}>
-            <IconCredits className="w-3.5 h-3.5" />
-          </span>
-          <span className="text-[12px] font-bold" style={{ color: "#16423c" }}>{(user.credits_balance ?? 0).toLocaleString()}</span>
-          <span className="text-[11px] text-gray-400">tokens remaining</span>
+        {/* Credits badge */}
+        <div className="flex items-center gap-1.5 mt-2.5 px-1">
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border"
+            style={{ backgroundColor: "#fd63330d", borderColor: "#fd633325" }}
+          >
+            <span style={{ color: "#fd6333" }}>
+              <IconCredits className="w-3 h-3" />
+            </span>
+            <span className="text-[11px] font-bold" style={{ color: "#fd6333" }}>
+              {(user.credits_balance ?? 0).toLocaleString()}
+            </span>
+            <span className="text-[11px] text-gray-400">credits</span>
+          </div>
         </div>
       </div>
 
@@ -394,7 +410,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Bottom Nav ── */}
-      <div className="px-3 pt-2 pb-2 border-t border-gray-100/80 space-y-0.5 mt-2">
+      <div className="px-3 pt-2 pb-2 space-y-0.5 mt-2 border-t border-gray-100/80">
         <NavItem
           icon={<IconSettings />}
           label="Settings"
@@ -423,20 +439,22 @@ export default function DashboardPage() {
 
       {/* ══ Desktop Sidebar ══ */}
       <aside
-        className="hidden md:flex md:flex-col fixed inset-y-0 left-0 z-30 bg-white border-r border-gray-100"
+        className="hidden md:flex md:flex-col fixed inset-y-0 left-0 z-30 border-r border-gray-100/80 bg-white"
         style={{ width: 232 }}
       >
         {sidebarContent}
       </aside>
 
       {/* ══ Mobile Top Bar ══ */}
-      <header className="md:hidden fixed top-0 inset-x-0 h-13 bg-white border-b border-gray-100 z-40 flex items-center justify-between px-4">
+      <header
+        className="md:hidden fixed top-0 inset-x-0 h-13 bg-white border-b border-gray-100 z-40 flex items-center justify-between px-4"
+      >
         <span className="text-base font-bold" style={{ color: "#16423c" }}>
           Cremiro
         </span>
         <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-600"
+          className="p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
         >
           {sidebarOpen ? <IconClose /> : <IconMenu />}
         </button>
