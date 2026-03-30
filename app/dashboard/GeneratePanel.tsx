@@ -3,6 +3,76 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import OutputStudio from "./OutputStudio";
+
+/* ------------------------------------------------------------------ */
+/*  Loading Screen                                                     */
+/* ------------------------------------------------------------------ */
+
+const LOADING_STAGES = [
+  "Fetching video metadata",
+  "Extracting transcript",
+  "Identifying viral moments",
+  "Rendering clips",
+  "Writing captions & blog",
+];
+
+function LoadingScreen({ onComplete }: { onComplete: () => void }) {
+  const [stageIdx, setStageIdx] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setStageIdx((prev) => {
+        if (prev < LOADING_STAGES.length - 1) return prev + 1;
+        clearInterval(interval);
+        setTimeout(onComplete, 500); // Wait briefly on 100%
+        return prev;
+      });
+    }, 1800);
+    return () => clearInterval(interval);
+  }, [onComplete]);
+
+  const progressPct = ((stageIdx + 1) / LOADING_STAGES.length) * 100;
+
+  return (
+    <div className="w-full h-[100dvh] flex flex-col items-center justify-center font-sans text-[#f5f5f5]" style={{ backgroundColor: "#0F0F0F" }}>
+      <div className="w-12 h-12 border-4 border-white/10 border-t-[#fd6333] rounded-full animate-spin mb-8" />
+      
+      <div className="h-8 relative w-full flex justify-center mb-2 overflow-hidden">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={stageIdx}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.3 }}
+            className="text-[18px] font-bold absolute"
+          >
+            {LOADING_STAGES[stageIdx]}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+
+      <div className="text-[13px] font-medium mb-6" style={{ color: "rgba(255,255,255,0.4)" }}>
+        Stage {stageIdx + 1} of {LOADING_STAGES.length}
+      </div>
+
+      <div className="w-64 h-1 bg-white/10 rounded-full overflow-hidden mb-4">
+        <motion.div 
+          className="h-full rounded-full" 
+          style={{ backgroundColor: "#fd6333" }}
+          initial={{ width: "0%" }}
+          animate={{ width: `${progressPct}%` }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+        />
+      </div>
+
+      <div className="text-[12px] font-medium" style={{ color: "rgba(255,255,255,0.25)" }}>
+        ~2–3 minutes remaining
+      </div>
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /*  YouTube URL Validation                                             */
@@ -401,6 +471,8 @@ function TextOutputPanel({
 /* ------------------------------------------------------------------ */
 
 export default function GeneratePanel() {
+  const [uiScreen, setUiScreen] = useState<"input" | "loading" | "output">("input");
+
   // URL state
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
@@ -528,6 +600,7 @@ export default function GeneratePanel() {
 
   const handleGenerate = useCallback(async () => {
     if (!canGenerate) return;
+    setUiScreen("loading");
 
     setGenState({
       submitting: true,
@@ -664,6 +737,7 @@ export default function GeneratePanel() {
       error: null,
       creditsAfter: null,
     });
+    setUiScreen("input");
   };
 
   const anySocialSelected = socialTextSelected || visualPostSelected;
@@ -672,6 +746,20 @@ export default function GeneratePanel() {
     (videoClipSelected ? 1 : 0) +
     (visualPostSelected ? 5 * visualPostQty : 0) +
     (blogPostSelected ? 5 * blogPostQty : 0);
+
+  if (uiScreen === "loading") {
+    return <LoadingScreen onComplete={() => setUiScreen("output")} />;
+  }
+
+  if (uiScreen === "output") {
+    return (
+      <OutputStudio 
+        onBack={() => {
+          resetGeneration();
+        }} 
+      />
+    );
+  }
 
   return (
     <div
@@ -1182,6 +1270,15 @@ export default function GeneratePanel() {
                       Generate Content
                     </>
                   )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setUiScreen("output")}
+                  className="w-full mt-2 text-center text-[11px] font-medium transition-colors hover:opacity-80"
+                  style={{ color: "rgba(253,99,51,0.6)" }}
+                >
+                  Preview Output Studio →
                 </button>
               </motion.div>
             </motion.div>
