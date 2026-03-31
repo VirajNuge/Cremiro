@@ -1,10 +1,576 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { motion, AnimatePresence, Reorder, useDragControls } from "framer-motion";
 
 interface OutputStudioProps {
   onBack: () => void;
+}
+
+// ─── Block Editor Types ───────────────────────────────────────────────────────
+
+type BlockType = 'h1' | 'h2' | 'h3' | 'paragraph' | 'youtube' | 'image';
+
+interface Block {
+  id: string;
+  type: BlockType;
+  content: string;
+  url?: string;
+}
+
+// ─── Block Utilities ──────────────────────────────────────────────────────────
+
+function genId(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function extractYouTubeId(url?: string): string | null {
+  if (!url) return null;
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+function sectionToBlocks(sections: { title: string; content: string }[]): Block[] {
+  const result: Block[] = [];
+  sections.forEach(s => {
+    result.push({ id: genId(), type: 'h2', content: s.title });
+    result.push({ id: genId(), type: 'paragraph', content: s.content });
+  });
+  return result;
+}
+
+// ─── Analytics Engine ─────────────────────────────────────────────────────────
+
+const FILLER_WORDS = new Set([
+  'the','a','an','is','are','was','were','be','been','being','have','has','had',
+  'do','does','did','will','would','could','should','may','might','must','shall',
+  'can','that','this','these','those','it','its','very','really','just','also',
+  'quite','rather','actually','literally','basically','honestly','simply','i',
+  'me','my','we','us','our','you','your','and','but','or','so','because','if',
+  'when','while','like','only','even','still','then','to','of','in','for','on',
+  'with','at','by','from','as','into','through','about','than','he','she','they',
+  'them','his','her','their','what','which','who','how','all','each','both',
+]);
+
+function countSyllables(word: string): number {
+  word = word.toLowerCase().replace(/[^a-z]/g, '');
+  if (word.length <= 3) return 1;
+  word = word.replace(/e$/, '');
+  const v = word.match(/[aeiouy]{1,2}/g);
+  return Math.max(1, v ? v.length : 1);
+}
+
+function getTextStats(text: string) {
+  const words = text.split(/\s+/).filter(w => w.length > 0);
+  const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  const syllables = words.reduce((n, w) => n + countSyllables(w), 0);
+  return { words: words.length, sentences: Math.max(1, sentences.length), syllables };
+}
+
+function computeReadingLevel(text: string): string {
+  const { words, sentences, syllables } = getTextStats(text);
+  if (words < 10) return 'N/A';
+  const asl = words / sentences;
+  const asw = syllables / words;
+  const grade = Math.max(0, 0.39 * asl + 11.8 * asw - 15.59);
+  if (grade <= 6) return 'Grade 6';
+  if (grade <= 8) return 'Grade 8';
+  if (grade <= 10) return 'Grade 10';
+  if (grade <= 12) return 'Grade 12';
+  return 'College';
+}
+
+function computeLexicalDensity(text: string): number {
+  const words = text.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(w => w.length > 0);
+  if (words.length === 0) return 0;
+  const content = words.filter(w => !FILLER_WORDS.has(w)).length;
+  return Math.round((content / words.length) * 100);
+}
+
+interface SEOResult { score: number; wordCount: number; keywordDensity: number; readability: number; headingScore: number; }
+interface GEOResult { score: number; grade: 'A'|'B'|'C'|'D'|'F'; topSuggestion: string; factualDensity: number; citationFormat: number; entityPresence: number; }
+
+function computeSEOScore(blocks: Block[], keyword: string): SEOResult {
+  const text = blocks.map(b => b.content).join(' ');
+  const { words, sentences, syllables } = getTextStats(text);
+
+  // Readability 0-20
+  const asl = words / Math.max(1, sentences);
+  const asw = syllables / Math.max(1, words);
+  const ease = 206.835 - 1.015 * asl - 84.6 * asw;
+  const readability = ease >= 60 ? 20 : ease >= 50 ? 16 : ease >= 40 ? 12 : ease >= 30 ? 8 : 4;
+
+  // Word count 0-15
+  const wordCount = words >= 300 && words <= 1500 ? 15 : words >= 200 ? 12 : words >= 100 ? 8 : 4;
+
+  // Keyword density 0-20
+  const kw = keyword.toLowerCase();
+  const kwCount = text.toLowerCase().split(/\s+/).filter(w => w.includes(kw)).length;
+  const density = words > 0 ? (kwCount / words) * 100 : 0;
+  const keywordDensity = density >= 0.5 && density <= 2.5 ? 20 : density >= 0.3 ? 15 : density > 0 ? 8 : 0;
+
+  // Heading structure 0-15
+  const h1s = blocks.filter(b => b.type === 'h1').length;
+  const h2s = blocks.filter(b => b.type === 'h2').length;
+  const headingScore = (h1s === 1 ? 5 : 0) + (h2s >= 2 ? 7 : h2s >= 1 ? 4 : 0) + (h2s >= 1 && blocks[0]?.content?.toLowerCase().includes(kw) ? 3 : 0);
+
+  // Sentence length 0-15
+  const sentenceList = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  const longRatio = sentenceList.length > 0 ? sentenceList.filter(s => s.split(/\s+/).length > 25).length / sentenceList.length : 0;
+  const sentenceScore = longRatio <= 0.1 ? 15 : longRatio <= 0.2 ? 11 : longRatio <= 0.3 ? 7 : 3;
+
+  const score = Math.min(100, readability + wordCount + keywordDensity + headingScore + sentenceScore);
+  return { score, wordCount: words, keywordDensity: Math.round(density * 10) / 10, readability, headingScore };
+}
+
+function computeGEOScore(blocks: Block[]): GEOResult {
+  const text = blocks.map(b => b.content).join(' ');
+  const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+
+  // Factual density 0-25
+  const factIndicators = [/\d+%/, /\d+\s*(million|billion|thousand|k)/i, /\d{4}/, /\$\d+/, /according to/i, /study found/i, /research/i, /data shows?/i];
+  const factualSentences = sentences.filter(s => factIndicators.some(p => p.test(s))).length;
+  const factualDensity = Math.min(25, Math.round((factualSentences / Math.max(1, sentences.length)) * 25));
+
+  // Citation format 0-25 (lists, definitions, headings)
+  const h2count = blocks.filter(b => b.type === 'h2' || b.type === 'h3').length;
+  const citationFormat = Math.min(25, h2count * 5 + (text.includes(':') ? 5 : 0) + (/"[^"]{15,}"/.test(text) ? 5 : 0));
+
+  // Entity presence 0-25
+  const numbers = (text.match(/\d+(\.\d+)?/g) || []).length;
+  const entityPresence = Math.min(25, numbers * 3);
+
+  // Statistical evidence 0-25
+  const pcts = (text.match(/\d+(\.\d+)?%/g) || []).length;
+  const statEvidence = Math.min(25, pcts * 6 + (text.match(/\d{4}/g) || []).length * 3);
+
+  const score = Math.min(100, factualDensity + citationFormat + entityPresence + statEvidence);
+  const grade: GEOResult['grade'] = score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 70 ? 'C' : score >= 60 ? 'D' : 'F';
+
+  const topSuggestion =
+    factualDensity < 10 ? "Add data points and statistics to boost citability" :
+    citationFormat < 10 ? "Use H2 headings to improve AI extractability" :
+    entityPresence < 10 ? "Include more numbers and named entities" :
+    "Great citability — add a quoted statistic to reach A grade";
+
+  return { score, grade, topSuggestion, factualDensity, citationFormat, entityPresence };
+}
+
+const SLASH_COMMANDS: { id: string; label: string; type: BlockType; icon: string }[] = [
+  { id: 'p',   label: 'Paragraph',  type: 'paragraph', icon: '¶' },
+  { id: 'h1',  label: 'Heading 1',  type: 'h1',        icon: 'H1' },
+  { id: 'h2',  label: 'Heading 2',  type: 'h2',        icon: 'H2' },
+  { id: 'h3',  label: 'Heading 3',  type: 'h3',        icon: 'H3' },
+  { id: 'yt',  label: 'YouTube',    type: 'youtube',   icon: '▶' },
+  { id: 'img', label: 'Image',      type: 'image',     icon: '⬜' },
+];
+
+const GEO_FACTUAL_GROUNDING = [
+  { claim: '"AI compute costs dropped ~40% per year"',    verified: true  },
+  { claim: '"$2M budget in 2022 → $50K today"',          verified: true  },
+  { claim: '"Multimodal AI reasoning across modalities"', verified: true  },
+];
+
+function parseInlineMarkdown(text: string): string {
+  let result = text
+    // Bold: **text**
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    // Italic: *text* (but not **)
+    .replace(/(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
+    // Link: [text](url)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-[#fd6333] underline hover:opacity-80">$1</a>');
+  return result;
+}
+
+interface BlockItemProps {
+  block: Block;
+  isEditing: boolean;
+  isToolbarVisible: boolean;
+  isTypeMenuOpen: boolean;
+  editedContent: Record<string, string>;
+  setEditingSection: (id: string | null) => void;
+  setEditedContent: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  setActiveBlocks: (updater: Block[] | ((prev: Block[]) => Block[])) => void;
+  setBlockToolbarId: (id: string | null) => void;
+  setBlockTypeMenuId: (id: string | null) => void;
+  setSlashMenuPos: React.Dispatch<React.SetStateAction<{ x: number, y: number }>>;
+  setSlashTargetId: React.Dispatch<React.SetStateAction<string | null>>;
+  setSlashFilter: React.Dispatch<React.SetStateAction<string>>;
+  setSlashMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  formatToolbarBlockId: string | null;
+  setFormatToolbarBlockId: (id: string | null) => void;
+  linkInputBlockId: string | null;
+  setLinkInputBlockId: (id: string | null) => void;
+  linkInputValue: string;
+  setLinkInputValue: (v: string) => void;
+}
+
+function BlockItem({
+  block,
+  isEditing,
+  isToolbarVisible,
+  isTypeMenuOpen,
+  editedContent,
+  setEditingSection,
+  setEditedContent,
+  setActiveBlocks,
+  setBlockToolbarId,
+  setBlockTypeMenuId,
+  setSlashMenuPos,
+  setSlashTargetId,
+  setSlashFilter,
+  setSlashMenuOpen,
+  formatToolbarBlockId,
+  setFormatToolbarBlockId,
+  linkInputBlockId,
+  setLinkInputBlockId,
+  linkInputValue,
+  setLinkInputValue,
+}: BlockItemProps) {
+  const dragControls = useDragControls();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const applyInlineFormat = (format: 'bold' | 'italic' | 'link', blockId: string) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const value = editedContent[blockId] ?? block.content;
+    const selected = value.slice(start, end);
+    if (!selected) return;
+
+    let wrapped: string;
+    if (format === 'bold') wrapped = `**${selected}**`;
+    else if (format === 'italic') wrapped = `*${selected}*`;
+    else {
+      wrapped = `[${selected}](${linkInputValue || 'https://'})`;
+      setLinkInputBlockId(null);
+      setLinkInputValue('');
+    }
+
+    const newValue = value.slice(0, start) + wrapped + value.slice(end);
+    setEditedContent(prev => ({ ...prev, [blockId]: newValue }));
+    setTimeout(() => {
+      ta.setSelectionRange(start + wrapped.length, start + wrapped.length);
+      ta.focus();
+    }, 0);
+  };
+
+  return (
+    <Reorder.Item
+      key={block.id}
+      value={block}
+      id={`block-${block.id}`}
+      dragListener={false}
+      dragControls={dragControls}
+      className="relative group"
+      whileDrag={{ scale: 1.01, boxShadow: "0 4px 20px rgba(0,0,0,0.08)", zIndex: 50 }}
+    >
+      {/* Block wrapper */}
+      <div
+        className="flex items-start gap-2 rounded-xl px-2 py-1 hover:bg-gray-50/60 transition-colors"
+        onMouseEnter={() => setBlockToolbarId(block.id)}
+        onMouseLeave={() => { setBlockToolbarId(null); setBlockTypeMenuId(null); }}
+      >
+        {/* Drag handle */}
+        <div
+          onPointerDown={(e) => dragControls.start(e)}
+          className={`flex-shrink-0 mt-1 w-5 h-5 flex items-center justify-center rounded cursor-grab active:cursor-grabbing transition-opacity ${isToolbarVisible ? 'opacity-40 hover:opacity-80' : 'opacity-0'}`}
+          style={{ touchAction: "none" }}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" className="text-gray-400 pointer-events-none">
+            <circle cx="3" cy="2" r="1.2"/><circle cx="9" cy="2" r="1.2"/>
+            <circle cx="3" cy="6" r="1.2"/><circle cx="9" cy="6" r="1.2"/>
+            <circle cx="3" cy="10" r="1.2"/><circle cx="9" cy="10" r="1.2"/>
+          </svg>
+        </div>
+
+        {/* Block content */}
+        <div className="flex-1 min-w-0">
+          {/* PARAGRAPH BLOCK */}
+          {block.type === 'paragraph' && (
+            isEditing ? (
+              <div className="w-full">
+                <AnimatePresence>
+                  {formatToolbarBlockId === block.id && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 4 }}
+                      className="flex items-center gap-0.5 bg-white border border-gray-200 rounded-xl shadow-lg px-1.5 py-1 mb-2 w-max"
+                      onMouseDown={e => e.preventDefault()} // prevent textarea blur
+                    >
+                      <button
+                        onMouseDown={e => { e.preventDefault(); applyInlineFormat('bold', block.id); }}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg text-[12px] font-bold text-[#374151] hover:bg-[#fd63330f] hover:text-[#fd6333] transition-colors"
+                        title="Bold (⌘B)"
+                      >B</button>
+                      <button
+                        onMouseDown={e => { e.preventDefault(); applyInlineFormat('italic', block.id); }}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg text-[12px] italic font-semibold text-[#374151] hover:bg-[#fd63330f] hover:text-[#fd6333] transition-colors"
+                        title="Italic (⌘I)"
+                      >I</button>
+                      <div className="w-px h-4 bg-gray-200 mx-0.5" />
+                      <button
+                        onMouseDown={e => {
+                          e.preventDefault();
+                          if (linkInputBlockId === block.id) {
+                            applyInlineFormat('link', block.id);
+                          } else {
+                            setLinkInputBlockId(block.id);
+                            setLinkInputValue('https://');
+                          }
+                        }}
+                        className={`w-7 h-7 flex items-center justify-center rounded-lg text-[11px] transition-colors ${linkInputBlockId === block.id ? 'bg-[#fd6333] text-white' : 'text-[#374151] hover:bg-[#fd63330f] hover:text-[#fd6333]'}`}
+                        title="Link (⌘K)"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                        </svg>
+                      </button>
+                      {/* Link URL input */}
+                      {linkInputBlockId === block.id && (
+                        <motion.div
+                          initial={{ opacity: 0, width: 0 }}
+                          animate={{ opacity: 1, width: 'auto' }}
+                          className="flex items-center gap-1 overflow-hidden ml-1"
+                        >
+                          <input
+                            autoFocus
+                            value={linkInputValue}
+                            onChange={e => setLinkInputValue(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') { e.preventDefault(); applyInlineFormat('link', block.id); }
+                              if (e.key === 'Escape') { setLinkInputBlockId(null); setLinkInputValue(''); }
+                            }}
+                            placeholder="https://"
+                            className="text-[11px] px-2 py-0.5 rounded-lg border border-gray-200 outline-none focus:border-[#fd6333] w-40 text-[#374151] placeholder-gray-300"
+                          />
+                          <button
+                            onMouseDown={e => { e.preventDefault(); applyInlineFormat('link', block.id); }}
+                            className="w-6 h-6 flex items-center justify-center rounded-lg bg-[#fd6333] text-white text-[10px] font-bold hover:opacity-90 transition-opacity"
+                          >→</button>
+                        </motion.div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                <textarea
+                  ref={textareaRef}
+                  autoFocus
+                  onSelect={() => {
+                    const ta = textareaRef.current;
+                    if (!ta) return;
+                    if (ta.selectionStart !== ta.selectionEnd) {
+                      setFormatToolbarBlockId(block.id);
+                    } else {
+                      setFormatToolbarBlockId(null);
+                      setLinkInputBlockId(null);
+                    }
+                  }}
+                  value={editedContent[block.id] ?? block.content}
+                  onChange={e => setEditedContent(prev => ({ ...prev, [block.id]: e.target.value }))}
+                  onBlur={() => {
+                    if (editedContent[block.id] !== undefined) {
+                      setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, content: editedContent[block.id] } : b));
+                    }
+                    setEditingSection(null);
+                    setFormatToolbarBlockId(null);
+                    setLinkInputBlockId(null);
+                  }}
+                  onKeyDown={e => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+                      e.preventDefault();
+                      applyInlineFormat('bold', block.id);
+                    }
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'i') {
+                      e.preventDefault();
+                      applyInlineFormat('italic', block.id);
+                    }
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                      e.preventDefault();
+                      applyInlineFormat('link', block.id);
+                    }
+                    if (e.key === 'Escape') {
+                      setEditingSection(null);
+                      setFormatToolbarBlockId(null);
+                      setLinkInputBlockId(null);
+                    }
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      const newBlock: Block = { id: genId(), type: 'paragraph', content: '' };
+                      setActiveBlocks((prev: Block[]) => {
+                        const idx = prev.findIndex(b => b.id === block.id);
+                        return [...prev.slice(0, idx + 1), newBlock, ...prev.slice(idx + 1)];
+                      });
+                      setEditingSection(newBlock.id);
+                    }
+                    if (e.key === '/') {
+                      const val = editedContent[block.id] ?? block.content;
+                      if (val === '' || val === '/') {
+                        e.preventDefault();
+                        const rect = (e.target as HTMLElement).getBoundingClientRect();
+                        setSlashMenuPos({ x: rect.left, y: rect.bottom + 4 });
+                        setSlashTargetId(block.id);
+                        setSlashFilter('');
+                        setSlashMenuOpen(true);
+                      }
+                    }
+                  }}
+                  className="w-full text-[14px] leading-relaxed text-[#374151] resize-none outline-none bg-transparent min-h-[24px]"
+                  style={{ fontFamily: 'var(--font-merriweather), serif' }}
+                  rows={3}
+                />
+              </div>
+            ) : (
+              <p
+                onClick={() => {
+                  setEditingSection(block.id);
+                  setEditedContent(prev => ({ ...prev, [block.id]: block.content }));
+                }}
+                className="text-[14px] leading-relaxed text-[#374151] cursor-text hover:bg-[#fd63330a] rounded-lg px-2 py-1 -mx-2 transition-colors min-h-[24px]"
+                style={{ fontFamily: 'var(--font-merriweather), serif' }}
+              >
+                {block.content 
+                  ? <span dangerouslySetInnerHTML={{ __html: parseInlineMarkdown(block.content) }} />
+                  : <span className="text-gray-300 italic">Empty paragraph — click to edit or type / for commands</span>
+                }
+              </p>
+            )
+          )}
+
+          {/* HEADING BLOCKS (h1 / h2 / h3) */}
+          {(block.type === 'h1' || block.type === 'h2' || block.type === 'h3') && (
+            isEditing ? (
+              <input
+                autoFocus
+                value={editedContent[block.id] ?? block.content}
+                onChange={e => setEditedContent(prev => ({ ...prev, [block.id]: e.target.value }))}
+                onBlur={() => {
+                  if (editedContent[block.id] !== undefined) {
+                    setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, content: editedContent[block.id] } : b));
+                  }
+                  setEditingSection(null);
+                }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === 'Escape') setEditingSection(null);
+                }}
+                className={`w-full bg-transparent border-b border-[#fd633340] outline-none text-[#16423c] font-bold ${block.type === 'h1' ? 'text-[22px]' : block.type === 'h2' ? 'text-[17px]' : 'text-[15px]'}`}
+                style={{ fontFamily: 'var(--font-merriweather), serif' }}
+              />
+            ) : (
+              <div
+                onClick={() => {
+                  setEditingSection(block.id);
+                  setEditedContent(prev => ({ ...prev, [block.id]: block.content }));
+                }}
+                className={`cursor-text font-bold text-[#16423c] hover:bg-[#fd63330a] rounded-lg px-2 py-1 -mx-2 transition-colors ${block.type === 'h1' ? 'text-[22px]' : block.type === 'h2' ? 'text-[17px]' : 'text-[15px]'}`}
+                style={{ fontFamily: 'var(--font-merriweather), serif' }}
+              >
+                {block.content || <span className="text-gray-300 italic font-normal text-[13px]">Empty heading</span>}
+              </div>
+            )
+          )}
+
+          {/* YOUTUBE BLOCK */}
+          {block.type === 'youtube' && (
+            <div className="w-full">
+              {extractYouTubeId(block.url) ? (
+                <div className="rounded-xl overflow-hidden border border-gray-100 shadow-sm">
+                  <iframe
+                    src={`https://www.youtube.com/embed/${extractYouTubeId(block.url)}`}
+                    className="w-full aspect-video"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-3 bg-[#fd63330a] border border-[#fd633330] rounded-xl px-4 py-3">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="#fd6333"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1V9.01a6.27 6.27 0 0 0-.79-.05 6.34 6.34 0 0 0-6.34 6.34 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.33-6.34V8.69a8.16 8.16 0 0 0 4.77 1.52V6.77a4.85 4.85 0 0 1-1-.08z"/></svg>
+                    <input
+                      placeholder="Paste YouTube URL here…"
+                      value={block.url ?? ''}
+                      onChange={e => setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, url: e.target.value } : b))}
+                      className="flex-1 bg-transparent text-[13px] text-[#374151] outline-none placeholder-[#9ca3af]"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* IMAGE PLACEHOLDER BLOCK */}
+          {block.type === 'image' && (
+            <div className="w-full">
+              <button className="w-full flex items-center justify-center gap-3 bg-gray-50 border-2 border-dashed border-gray-200 hover:border-[#fd6333] hover:bg-[#fd63330a] rounded-xl py-8 transition-colors group/img">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.5" className="group-hover/img:stroke-[#fd6333] transition-colors"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                <span className="text-[13px] text-[#9ca3af] group-hover/img:text-[#fd6333] font-medium transition-colors">Click to insert image</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Block toolbar (type switcher + delete) */}
+        <div className={`flex-shrink-0 flex items-center gap-1 mt-1 transition-opacity ${isToolbarVisible ? 'opacity-100' : 'opacity-0'}`}>
+          {/* Type switcher */}
+          <div className="relative">
+            <button
+              onClick={e => { e.stopPropagation(); setBlockTypeMenuId(isTypeMenuOpen ? null : block.id); }}
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-gray-200 bg-white text-[10px] font-bold text-[#6b7280] hover:border-[#fd6333] hover:text-[#fd6333] transition-colors"
+            >
+              {block.type === 'paragraph' ? 'P' : block.type === 'h1' ? 'H1' : block.type === 'h2' ? 'H2' : block.type === 'h3' ? 'H3' : block.type === 'youtube' ? '▶' : '⬜'}
+            </button>
+            {isTypeMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setBlockTypeMenuId(null)} />
+                <div className="absolute right-0 top-full mt-1 z-40 bg-white border border-gray-200 rounded-xl shadow-xl p-1.5 w-40">
+                  {SLASH_COMMANDS.map(cmd => (
+                    <button
+                      key={cmd.id}
+                      onClick={() => {
+                        setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, type: cmd.type } : b));
+                        setBlockTypeMenuId(null);
+                      }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${block.type === cmd.type ? 'bg-[#16423c] text-white' : 'text-[#374151] hover:bg-gray-50'}`}
+                    >
+                      <span className="w-6 text-center font-mono text-[11px] text-[#6b7280]">{cmd.icon}</span>
+                      {cmd.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          {/* Delete */}
+          <button
+            onClick={() => setActiveBlocks((prev: Block[]) => prev.filter(b => b.id !== block.id))}
+            className="w-7 h-7 flex items-center justify-center rounded-lg border border-gray-200 bg-white text-[#9ca3af] hover:border-red-300 hover:text-red-400 transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Image anchor between blocks */}
+      <div className="flex items-center gap-2 my-1 opacity-0 group-hover:opacity-100 transition-opacity px-9">
+        <div className="flex-1 h-px bg-gray-100" />
+        <button
+          onClick={() => {
+            const newBlock: Block = { id: genId(), type: 'paragraph', content: '' };
+            setActiveBlocks((prev: Block[]) => {
+              const idx = prev.findIndex(b => b.id === block.id);
+              return [...prev.slice(0, idx + 1), newBlock, ...prev.slice(idx + 1)];
+            });
+            setEditingSection(newBlock.id);
+          }}
+          className="w-6 h-6 rounded-full border border-dashed border-gray-300 hover:border-[#fd6333] flex items-center justify-center text-[#9ca3af] hover:text-[#fd6333] text-[14px] transition-colors"
+        >+</button>
+        <div className="flex-1 h-px bg-gray-100" />
+      </div>
+    </Reorder.Item>
+  );
 }
 
 const DEMO_FAILED = "c2-Shorts";
@@ -133,6 +699,12 @@ const MOCK = {
           { title: "Multimodal AI: The Real Frontier", content: "Text-only AI was always a limited lens on human cognition. The rise of genuinely capable multimodal systems — models that see, hear, and reason across modalities simultaneously — represents the most significant capability jump since the transformer architecture itself." },
           { title: "What This Means for You", content: "The creators, marketers, and knowledge workers who will thrive in the AI-augmented economy share one trait: they're learning to direct AI with precision rather than compete with it on raw output volume. The skill premium is shifting from production to curation, from execution to vision." },
         ],
+        blocks: sectionToBlocks([
+          { title: "The Silent Revolution", content: "While headlines focus on dramatic AI breakthroughs, a quieter transformation is reshaping industries at their foundation. The democratization of compute — a trend accelerating faster than most analysts predict — is placing enterprise-grade AI capabilities in the hands of startups and individual creators alike." },
+          { title: "The Economics of Intelligence", content: "The cost curve of AI inference has followed a trajectory reminiscent of solar energy: each doubling of capacity brings roughly a 40% reduction in cost. What required a $2M engineering budget in 2022 can be replicated today with open-source tools and $50K in cloud credits." },
+          { title: "Multimodal AI: The Real Frontier", content: "Text-only AI was always a limited lens on human cognition. The rise of genuinely capable multimodal systems — models that see, hear, and reason across modalities simultaneously — represents the most significant capability jump since the transformer architecture itself." },
+          { title: "What This Means for You", content: "The creators, marketers, and knowledge workers who will thrive in the AI-augmented economy share one trait: they're learning to direct AI with precision rather than compete with it on raw output volume. The skill premium is shifting from production to curation, from execution to vision." },
+        ]),
       },
       {
         id: "v2",
@@ -143,6 +715,12 @@ const MOCK = {
           { title: "Seeing, Hearing, Thinking", content: "The moment AI stopped being a text box and started seeing images, listening to audio, and reasoning across modalities — that's when the real story began. Not a tool upgrade. A cognitive leap." },
           { title: "The New Skill", content: "The people quietly winning aren't the ones who know the most code. They're the ones who've learned a stranger skill: how to think alongside a machine. Curation over creation. Vision over execution. Direction over output." },
         ],
+        blocks: sectionToBlocks([
+          { title: "A Quiet Shift", content: "It didn't arrive with fanfare. No press conference, no product launch event. The revolution in artificial intelligence crept into the world through server farms, API invoices, and the quiet hum of inference engines spinning up at a fraction of yesterday's cost." },
+          { title: "The Price Nobody Predicted", content: "In 2022, training a frontier model cost the GDP of a small city. By 2025, the same capability sits behind a $20/month API key. The economists who study technology adoption call this an 'S-curve inflection'. Everyone else just calls it a surprise." },
+          { title: "Seeing, Hearing, Thinking", content: "The moment AI stopped being a text box and started seeing images, listening to audio, and reasoning across modalities — that's when the real story began. Not a tool upgrade. A cognitive leap." },
+          { title: "The New Skill", content: "The people quietly winning aren't the ones who know the most code. They're the ones who've learned a stranger skill: how to think alongside a machine. Curation over creation. Vision over execution. Direction over output." },
+        ]),
       },
     ],
   },
@@ -261,12 +839,46 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
   const [editedContent, setEditedContent] = useState<Record<string, string>>({});
   const [blogSchedulePlatform, setBlogSchedulePlatform] = useState<string>("WordPress");
 
+  // Block editor states
+  const [versionBlocks, setVersionBlocks] = useState<Record<string, Block[]>>(() => {
+    const result: Record<string, Block[]> = {};
+    MOCK.blog.versions.forEach(v => {
+      result[v.id] = (v as { id: string; template: string; sections: {title:string;content:string}[]; blocks?: Block[] }).blocks ?? sectionToBlocks(v.sections);
+    });
+    return result;
+  });
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashMenuPos, setSlashMenuPos] = useState({ x: 0, y: 0 });
+  const [slashFilter, setSlashFilter] = useState('');
+  const [slashTargetId, setSlashTargetId] = useState<string | null>(null);
+  const [blockToolbarId, setBlockToolbarId] = useState<string | null>(null);
+  const [blockTypeMenuId, setBlockTypeMenuId] = useState<string | null>(null);
+  const [formatToolbarBlockId, setFormatToolbarBlockId] = useState<string | null>(null);
+  const [linkInputBlockId, setLinkInputBlockId] = useState<string | null>(null);
+  const [linkInputValue, setLinkInputValue] = useState('');
+
   useEffect(() => {
     const t = setTimeout(() => setGaugeAnimated(true), 300);
     return () => clearTimeout(t);
   }, []);
 
   const totalSelected = Object.values(selectedItems).filter(Boolean).length;
+
+  // Blog analytics (computed from active blocks)
+  const activeBlocks = useMemo(() => versionBlocks[activeBlogVersion] ?? [], [versionBlocks, activeBlogVersion]);
+  const blogText = useMemo(() => activeBlocks.filter(b => ['paragraph','h1','h2','h3'].includes(b.type)).map(b => b.content).join(' '), [activeBlocks]);
+  const seoResult = useMemo(() => computeSEOScore(activeBlocks, MOCK.blog.keywords[0]), [activeBlocks]);
+  const geoResult = useMemo(() => computeGEOScore(activeBlocks), [activeBlocks]);
+  const readingLevel = useMemo(() => computeReadingLevel(blogText), [blogText]);
+  const lexicalDensity = useMemo(() => computeLexicalDensity(blogText), [blogText]);
+  const tocItems = useMemo(() => activeBlocks.filter(b => b.type === 'h2' || b.type === 'h3'), [activeBlocks]);
+
+  const setActiveBlocks = useCallback((updater: Block[] | ((prev: Block[]) => Block[])) => {
+    setVersionBlocks(prev => ({
+      ...prev,
+      [activeBlogVersion]: typeof updater === 'function' ? updater(prev[activeBlogVersion] ?? []) : updater,
+    }));
+  }, [activeBlogVersion]);
 
   // Social campaign item key: "campId-platform" e.g. "camp1-twitter"
   const hasSocialConflict = (itemKey: string): boolean => {
@@ -1090,8 +1702,43 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
             )}
 
             {activeTab === "blog" && (
-              <div className="max-w-[1200px] mx-auto px-6 py-8 flex gap-6 h-[calc(100vh-165px)]">
+              <div className="max-w-[1200px] mx-auto px-6 py-8 flex gap-6 h-[calc(100vh-165px)] relative">
                 
+                {/* Slash command menu */}
+                <AnimatePresence>
+                  {slashMenuOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setSlashMenuOpen(false)} />
+                      <motion.div
+                        initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                        transition={{ duration: 0.12 }}
+                        className="fixed z-50 bg-white rounded-2xl border border-gray-200 shadow-2xl shadow-gray-200/60 p-2 w-52"
+                        style={{ top: slashMenuPos.y, left: slashMenuPos.x }}
+                      >
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-[#9ca3af] px-2 py-1 mb-1">BLOCKS</div>
+                        {SLASH_COMMANDS.filter(c => c.label.toLowerCase().includes(slashFilter.toLowerCase())).map(cmd => (
+                          <button
+                            key={cmd.id}
+                            onClick={() => {
+                              if (slashTargetId) {
+                                setActiveBlocks(prev => prev.map(b => b.id === slashTargetId ? { ...b, type: cmd.type, content: '' } : b));
+                                setEditingSection(slashTargetId);
+                              }
+                              setSlashMenuOpen(false);
+                            }}
+                            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] text-[#374151] hover:bg-gray-50 hover:text-[#16423c] font-medium transition-colors"
+                          >
+                            <span className="w-7 h-7 flex items-center justify-center bg-gray-100 rounded-lg text-[11px] font-mono font-bold text-[#6b7280]">{cmd.icon}</span>
+                            {cmd.label}
+                          </button>
+                        ))}
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+
                 {/* LEFT SIDEBAR */}
                 <div className="w-[192px] shrink-0 bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-4 flex flex-col gap-1 overflow-y-auto">
                   <div className="text-[10px] font-bold uppercase tracking-widest text-[#9ca3af] mb-2 px-1">TEMPLATE</div>
@@ -1120,8 +1767,31 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                       </button>
                     );
                   })}
+                  
+                  {/* Table of Contents */}
+                  {tocItems.length > 0 && (
+                    <div className="mt-4 mb-1">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-[#9ca3af] mb-2 px-1">CONTENTS</div>
+                      <div className="flex flex-col gap-0.5">
+                        {tocItems.map((block, i) => (
+                          <a
+                            key={block.id}
+                            href={`#block-${block.id}`}
+                            className={`text-[12px] font-medium text-[#374151] rounded-lg px-3 py-1 hover:bg-gray-50 hover:text-[#16423c] transition-colors truncate ${block.type === 'h3' ? 'pl-5 text-[11px] text-[#6b7280]' : ''}`}
+                            onClick={e => {
+                              e.preventDefault();
+                              document.getElementById(`block-${block.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }}
+                          >
+                            {block.content || `Section ${i + 1}`}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="mt-auto" />
-                  <button className="w-full rounded-xl bg-[#fd63330f] border border-[#fd633330] text-[#fd6333] text-[12px] font-semibold py-2.5 flex items-center justify-center gap-2 mt-auto">
+                  <button className="w-full rounded-xl bg-[#fd63330f] border border-[#fd633330] text-[#fd6333] text-[12px] font-semibold py-2.5 flex items-center justify-center gap-2 mt-auto shrink-0">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
                     </svg>
@@ -1167,12 +1837,12 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                             stroke="#fd6333" strokeWidth="8" fill="none"
                             pathLength="100" strokeDasharray="75 100" strokeLinecap="round"
                             initial={{ strokeDashoffset: 75 }}
-                            animate={{ strokeDashoffset: gaugeAnimated ? 75 - MOCK.blog.qualityScore * 0.75 : 75 }}
+                            animate={{ strokeDashoffset: gaugeAnimated ? 75 - seoResult.score * 0.75 : 75 }}
                             transition={{ duration: 1, ease: "easeOut" }}
                           />
                         </svg>
                       </div>
-                      <span className="text-[11px] font-bold text-[#16423c] leading-none mt-1">{MOCK.blog.qualityScore}</span>
+                      <span className="text-[11px] font-bold text-[#16423c] leading-none mt-1">{seoResult.score}</span>
                     </div>
 
                     <div className="flex items-center gap-1.5 mr-2">
@@ -1196,66 +1866,39 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                   </div>
 
                   {/* Card Body */}
-                  <div className="px-6 py-6 flex-1">
-                    {MOCK.blog.versions.find(v => v.id === activeBlogVersion)?.sections.map((section, idx, sections) => {
-                      const strIdx = String(idx);
-                      const isExpanded = expandedSections[strIdx] ?? false;
-
-                      return (
-                        <React.Fragment key={idx}>
-                          <div className="flex flex-col mb-1">
-                            <div 
-                              className="flex items-center gap-3 cursor-pointer py-2 group"
-                              onClick={() => setExpandedSections(prev => ({ ...prev, [strIdx]: !prev[strIdx] }))}
-                            >
-                              <svg 
-                                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                                style={{ transform: `rotate(${isExpanded ? 90 : 0}deg)`, transition: 'transform 0.2s' }}
-                              >
-                                <polyline points="9 18 15 12 9 6"/>
-                              </svg>
-                              <h3 className="text-[14px] font-bold text-[#16423c] select-none" style={{ fontFamily: 'var(--font-merriweather), serif' }}>
-                                {section.title}
-                              </h3>
-                            </div>
-
-                            {isExpanded && (
-                              <div className="pl-6 pb-2 pt-1">
-                                {editingSection === strIdx ? (
-                                  <textarea
-                                    autoFocus
-                                    value={editedContent[strIdx] ?? section.content}
-                                    onChange={e => setEditedContent(prev => ({ ...prev, [strIdx]: e.target.value }))}
-                                    onBlur={() => setEditingSection(null)}
-                                    className="w-full text-[14px] leading-relaxed text-[#374151] resize-none outline-none border border-[#fd633340] rounded-xl p-3 focus:border-[#fd6333] min-h-[80px]"
-                                    style={{ fontFamily: 'var(--font-merriweather), serif' }}
-                                  />
-                                ) : (
-                                  <p 
-                                    onClick={() => {
-                                      setEditingSection(strIdx);
-                                      setEditedContent(prev => ({ ...prev, [strIdx]: prev[strIdx] ?? section.content }));
-                                    }}
-                                    className="text-[14px] leading-relaxed text-[#374151] cursor-text hover:bg-[#fd63330a] rounded-lg px-2 py-1 -mx-2 -my-1 transition-colors"
-                                    style={{ fontFamily: 'var(--font-merriweather), serif' }}
-                                  >
-                                    {editedContent[strIdx] ?? section.content}
-                                  </p>
-                                )}
-                              </div>
-                            )}
-                          </div>
-
-                          {idx < sections.length - 1 && (
-                            <button className="flex items-center gap-2 my-3 w-full group">
-                              <div className="flex-1 h-px bg-gray-100 group-hover:bg-[#fd633330] transition-colors" />
-                              <span className="w-7 h-7 rounded-full border border-dashed border-gray-300 group-hover:border-[#fd6333] flex items-center justify-center text-[#9ca3af] group-hover:text-[#fd6333] text-[16px] transition-colors pb-0.5">+</span>
-                              <div className="flex-1 h-px bg-gray-100 group-hover:bg-[#fd633330] transition-colors" />
-                            </button>
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
+                  <div className="px-4 py-4 flex-1 overflow-y-auto" onClick={() => { setBlockTypeMenuId(null); }}>
+                    <Reorder.Group
+                      axis="y"
+                      values={activeBlocks}
+                      onReorder={setActiveBlocks}
+                      className="flex flex-col gap-0.5"
+                    >
+                      {activeBlocks.map((block) => (
+                        <BlockItem
+                          key={block.id}
+                          block={block}
+                          isEditing={editingSection === block.id}
+                          isToolbarVisible={blockToolbarId === block.id}
+                          isTypeMenuOpen={blockTypeMenuId === block.id}
+                          editedContent={editedContent}
+                          setEditingSection={setEditingSection}
+                          setEditedContent={setEditedContent}
+                          setActiveBlocks={setActiveBlocks}
+                          setBlockToolbarId={setBlockToolbarId}
+                          setBlockTypeMenuId={setBlockTypeMenuId}
+                          setSlashMenuPos={setSlashMenuPos}
+                          setSlashTargetId={setSlashTargetId}
+                          setSlashFilter={setSlashFilter}
+                          setSlashMenuOpen={setSlashMenuOpen}
+                          formatToolbarBlockId={formatToolbarBlockId}
+                          setFormatToolbarBlockId={setFormatToolbarBlockId}
+                          linkInputBlockId={linkInputBlockId}
+                          setLinkInputBlockId={setLinkInputBlockId}
+                          linkInputValue={linkInputValue}
+                          setLinkInputValue={setLinkInputValue}
+                        />
+                      ))}
+                    </Reorder.Group>
                   </div>
 
                   {/* Card Footer */}
@@ -1300,7 +1943,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                 </div>
 
                 {/* RIGHT RAIL */}
-                <div className="w-[260px] shrink-0 flex flex-col gap-4 overflow-y-auto">
+                <div className="w-[260px] shrink-0 flex flex-col gap-4 overflow-y-auto pr-1 pb-4">
                   
                   {/* 1. SEO Score */}
                   <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-5">
@@ -1316,13 +1959,13 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                             stroke="#fd6333" strokeWidth="8" fill="none"
                             pathLength="100" strokeDasharray="75 100" strokeLinecap="round"
                             initial={{ strokeDashoffset: 75 }}
-                            animate={{ strokeDashoffset: gaugeAnimated ? 75 - MOCK.blog.qualityScore * 0.75 : 75 }}
+                            animate={{ strokeDashoffset: gaugeAnimated ? 75 - seoResult.score * 0.75 : 75 }}
                             transition={{ duration: 1, ease: "easeOut" }}
                           />
                         </svg>
                         <div className="absolute inset-0 flex flex-col items-center justify-center pt-1">
                           <span className="text-[28px] font-black text-[#16423c] leading-none">
-                            {MOCK.blog.qualityScore}
+                            {seoResult.score}
                           </span>
                         </div>
                       </div>
@@ -1330,22 +1973,82 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                     </div>
                   </div>
 
-                  {/* 2. Content Metrics */}
+                  {/* 2. GEO Citability */}
+                  <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] px-5 py-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-[11px] font-bold uppercase tracking-widest text-[#9ca3af]">GEO CITABILITY</div>
+                      <span className={`text-[12px] font-black px-2 py-0.5 rounded-lg ${geoResult.grade === 'A' ? 'bg-green-100 text-green-700' : geoResult.grade === 'B' ? 'bg-[#fd63330f] text-[#fd6333]' : 'bg-gray-100 text-gray-500'}`}>
+                        Grade {geoResult.grade}
+                      </span>
+                    </div>
+                    {/* Mini horizontal bar chart for 3 sub-scores */}
+                    <div className="flex flex-col gap-2 mb-3">
+                      {[
+                        { label: 'Factual density', value: geoResult.factualDensity, max: 25 },
+                        { label: 'Citation format', value: geoResult.citationFormat, max: 25 },
+                        { label: 'Entity presence', value: geoResult.entityPresence, max: 25 },
+                      ].map(({ label, value, max }) => (
+                        <div key={label}>
+                          <div className="flex items-center justify-between mb-0.5">
+                            <span className="text-[11px] text-[#6b7280]">{label}</span>
+                            <span className="text-[11px] font-semibold text-[#16423c]">{value}/{max}</span>
+                          </div>
+                          <div className="h-1 w-full rounded-full bg-gray-100">
+                            <motion.div
+                              className="h-full rounded-full bg-[#fd6333]"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${(value / max) * 100}%` }}
+                              transition={{ duration: 0.6, ease: 'easeOut' }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-[#6b7280] leading-relaxed italic">{geoResult.topSuggestion}</p>
+                  </div>
+
+                  {/* 3. Content Metrics */}
                   <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] px-5 py-4">
                     <div className="text-[11px] font-bold uppercase tracking-widest text-[#9ca3af] mb-3">
                       CONTENT METRICS
                     </div>
                     <div className="flex items-center justify-between py-1.5 border-b border-gray-50">
                       <span className="text-[12px] text-[#6b7280]">Reading Level</span>
-                      <span className="text-[12px] font-semibold text-[#16423c]">{MOCK.blog.readingLevel}</span>
+                      <span className="text-[12px] font-semibold text-[#16423c]">{readingLevel}</span>
+                    </div>
+                    <div className="flex items-center justify-between py-1.5 border-b border-gray-50">
+                      <span className="text-[12px] text-[#6b7280]">Word Count</span>
+                      <span className="text-[12px] font-semibold text-[#16423c]">{seoResult.wordCount.toLocaleString()} words</span>
                     </div>
                     <div className="flex items-center justify-between py-1.5 border-b border-gray-50 border-0">
-                      <span className="text-[12px] text-[#6b7280]">Word Count</span>
-                      <span className="text-[12px] font-semibold text-[#16423c]">~1,240 words</span>
+                      <span className="text-[12px] text-[#6b7280]">Info Density</span>
+                      <span className="text-[12px] font-semibold text-[#16423c]">{lexicalDensity}%</span>
                     </div>
                   </div>
 
-                  {/* 3. Keyword Density */}
+                  {/* 4. Factual Grounding */}
+                  <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] px-5 py-4">
+                    <div className="text-[11px] font-bold uppercase tracking-widest text-[#9ca3af] mb-3">FACTUAL GROUNDING</div>
+                    <div className="flex flex-col gap-2">
+                      {GEO_FACTUAL_GROUNDING.map((item, i) => (
+                        <div key={i} className="flex items-start gap-2.5">
+                          <div className={`w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center mt-0.5 ${item.verified ? 'bg-green-100' : 'bg-red-100'}`}>
+                            {item.verified
+                              ? <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                              : <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            }
+                          </div>
+                          <p className="text-[11px] text-[#374151] leading-relaxed">{item.claim}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 pt-2.5 border-t border-gray-50 flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full bg-green-400" />
+                      <span className="text-[11px] text-[#6b7280]">3/3 claims verified against transcript</span>
+                    </div>
+                  </div>
+
+                  {/* 5. Keyword Density */}
                   <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] px-5 py-4">
                     <div className="text-[11px] font-bold uppercase tracking-widest text-[#9ca3af] mb-3">
                       KEYWORD DENSITY
@@ -1368,7 +2071,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                     </div>
                   </div>
 
-                  {/* 4. Meta Description */}
+                  {/* 6. Meta Description */}
                   <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] px-5 py-4">
                     <div className="text-[11px] font-bold uppercase tracking-widest text-[#9ca3af] mb-3">
                       META DESCRIPTION
@@ -1381,7 +2084,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                     </div>
                   </div>
 
-                  {/* 5. Top Keywords */}
+                  {/* 7. Top Keywords */}
                   <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] px-5 py-4">
                     <div className="text-[11px] font-bold uppercase tracking-widest text-[#9ca3af] mb-3">
                       TOP KEYWORDS
