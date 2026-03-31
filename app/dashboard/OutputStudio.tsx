@@ -9,13 +9,18 @@ interface OutputStudioProps {
 
 // ─── Block Editor Types ───────────────────────────────────────────────────────
 
-type BlockType = 'h1' | 'h2' | 'h3' | 'paragraph' | 'youtube' | 'image';
+type BlockType = 'h1' | 'h2' | 'h3' | 'paragraph' | 'youtube' | 'image' | 'blockquote' | 'pullquote' | 'callout';
 
 interface Block {
   id: string;
   type: BlockType;
   content: string;
   url?: string;
+  anchorId?: string;       // jump-link slug for h1/h2/h3 blocks
+  dropCap?: boolean;       // first-letter drop cap for paragraph blocks
+  calloutIcon?: string;    // emoji icon for callout blocks (default '💡')
+  calloutColor?: string;   // bg color key for callout (default 'yellow')
+  attribution?: string;    // citation line for blockquote/pullquote
 }
 
 // ─── Block Utilities ──────────────────────────────────────────────────────────
@@ -163,6 +168,9 @@ const SLASH_COMMANDS: { id: string; label: string; type: BlockType; icon: string
   { id: 'h3',  label: 'Heading 3',  type: 'h3',        icon: 'H3' },
   { id: 'yt',  label: 'YouTube',    type: 'youtube',   icon: '▶' },
   { id: 'img', label: 'Image',      type: 'image',     icon: '⬜' },
+  { id: 'bq',  label: 'Block Quote',  type: 'blockquote', icon: '"' },
+  { id: 'pq',  label: 'Pull Quote',   type: 'pullquote',  icon: '❝' },
+  { id: 'co',  label: 'Callout',      type: 'callout',    icon: '💡' },
 ];
 
 const GEO_FACTUAL_GROUNDING = [
@@ -170,6 +178,24 @@ const GEO_FACTUAL_GROUNDING = [
   { claim: '"$2M budget in 2022 → $50K today"',          verified: true  },
   { claim: '"Multimodal AI reasoning across modalities"', verified: true  },
 ];
+
+const CALLOUT_COLORS: Record<string, { bg: string; border: string; icon: string }> = {
+  yellow: { bg: '#fffbeb', border: '#fcd34d', icon: '💡' },
+  blue:   { bg: '#eff6ff', border: '#93c5fd', icon: '📘' },
+  green:  { bg: '#f0fdf4', border: '#86efac', icon: '✅' },
+  red:    { bg: '#fef2f2', border: '#fca5a5', icon: '⚠️' },
+  purple: { bg: '#faf5ff', border: '#c4b5fd', icon: '✨' },
+};
+
+function formatTimeAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  const m = Math.floor(diff / 60000);
+  const h = Math.floor(diff / 3600000);
+  if (m < 1) return 'Just now';
+  if (m < 60) return `${m}m ago`;
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 function parseInlineMarkdown(text: string): string {
   let result = text
@@ -203,6 +229,8 @@ interface BlockItemProps {
   setLinkInputBlockId: (id: string | null) => void;
   linkInputValue: string;
   setLinkInputValue: (v: string) => void;
+  anchorMenuId: string | null;
+  setAnchorMenuId: (id: string | null) => void;
 }
 
 function BlockItem({
@@ -226,6 +254,8 @@ function BlockItem({
   setLinkInputBlockId,
   linkInputValue,
   setLinkInputValue,
+  anchorMenuId,
+  setAnchorMenuId,
 }: BlockItemProps) {
   const dragControls = useDragControls();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -429,10 +459,28 @@ function BlockItem({
                   setEditingSection(block.id);
                   setEditedContent(prev => ({ ...prev, [block.id]: block.content }));
                 }}
-                className="text-[14px] leading-relaxed text-[#374151] cursor-text hover:bg-[#fd63330a] rounded-lg px-2 py-1 -mx-2 transition-colors min-h-[24px]"
+                className={`text-[14px] leading-relaxed text-[#374151] cursor-text hover:bg-[#fd63330a] rounded-lg px-2 py-1 -mx-2 transition-colors min-h-[24px] ${block.dropCap ? 'drop-cap-active' : ''}`}
                 style={{ fontFamily: 'var(--font-merriweather), serif' }}
               >
-                {block.content 
+                {block.dropCap && block.content ? (
+                  <span>
+                    <span
+                      style={{
+                        fontFamily: 'var(--font-merriweather), serif',
+                        fontSize: '3.5rem',
+                        fontWeight: '700',
+                        lineHeight: '0.8',
+                        float: 'left',
+                        marginRight: '0.15em',
+                        marginTop: '0.05em',
+                        color: '#16423c',
+                      }}
+                    >
+                      {block.content[0]}
+                    </span>
+                    <span dangerouslySetInnerHTML={{ __html: parseInlineMarkdown(block.content.slice(1)) }} />
+                  </span>
+                ) : block.content 
                   ? <span dangerouslySetInnerHTML={{ __html: parseInlineMarkdown(block.content) }} />
                   : <span className="text-gray-300 italic">Empty paragraph — click to edit or type / for commands</span>
                 }
@@ -468,7 +516,12 @@ function BlockItem({
                 className={`cursor-text font-bold text-[#16423c] hover:bg-[#fd63330a] rounded-lg px-2 py-1 -mx-2 transition-colors ${block.type === 'h1' ? 'text-[22px]' : block.type === 'h2' ? 'text-[17px]' : 'text-[15px]'}`}
                 style={{ fontFamily: 'var(--font-merriweather), serif' }}
               >
-                {block.content || <span className="text-gray-300 italic font-normal text-[13px]">Empty heading</span>}
+                <span className="flex items-center gap-2">
+                  <span>{block.content || <span className="text-gray-300 italic font-normal text-[13px]">Empty heading</span>}</span>
+                  {block.anchorId && (
+                    <span className="text-[10px] font-mono text-[#fd633380] font-normal">#{block.anchorId}</span>
+                  )}
+                </span>
               </div>
             )
           )}
@@ -510,6 +563,161 @@ function BlockItem({
               </button>
             </div>
           )}
+
+          {/* BLOCKQUOTE BLOCK */}
+          {block.type === 'blockquote' && (
+            <div className="border-l-[3px] border-[#fd6333] pl-4 py-1">
+              {isEditing ? (
+                <div className="flex flex-col gap-2">
+                  <textarea
+                    autoFocus
+                    value={editedContent[block.id] ?? block.content}
+                    onChange={e => setEditedContent(prev => ({ ...prev, [block.id]: e.target.value }))}
+                    onBlur={() => {
+                      if (editedContent[block.id] !== undefined) {
+                        setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, content: editedContent[block.id] } : b));
+                      }
+                      setEditingSection(null);
+                    }}
+                    onKeyDown={e => { if (e.key === 'Escape') setEditingSection(null); }}
+                    placeholder="Quote text…"
+                    className="w-full text-[14px] leading-relaxed text-[#374151] italic resize-none outline-none bg-transparent min-h-[24px]"
+                    style={{ fontFamily: 'var(--font-merriweather), serif' }}
+                    rows={2}
+                  />
+                  <input
+                    value={block.attribution ?? ''}
+                    onChange={e => setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, attribution: e.target.value } : b))}
+                    placeholder="— Attribution (optional)"
+                    className="text-[11px] text-[#6b7280] bg-transparent outline-none border-b border-gray-100 pb-0.5"
+                  />
+                </div>
+              ) : (
+                <div
+                  onClick={() => { setEditingSection(block.id); setEditedContent(prev => ({ ...prev, [block.id]: block.content })); }}
+                  className="cursor-text"
+                >
+                  <p className="text-[14px] leading-relaxed text-[#374151] italic" style={{ fontFamily: 'var(--font-merriweather), serif' }}>
+                    {block.content || <span className="text-gray-300 not-italic">Quote text — click to edit</span>}
+                  </p>
+                  {block.attribution && (
+                    <p className="text-[11px] text-[#6b7280] mt-1">— {block.attribution}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* PULLQUOTE BLOCK */}
+          {block.type === 'pullquote' && (
+            <div className="py-4 px-6 text-center border-t-2 border-b-2 border-[#16423c20] my-2">
+              {isEditing ? (
+                <div className="flex flex-col gap-2">
+                  <textarea
+                    autoFocus
+                    value={editedContent[block.id] ?? block.content}
+                    onChange={e => setEditedContent(prev => ({ ...prev, [block.id]: e.target.value }))}
+                    onBlur={() => {
+                      if (editedContent[block.id] !== undefined) {
+                        setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, content: editedContent[block.id] } : b));
+                      }
+                      setEditingSection(null);
+                    }}
+                    onKeyDown={e => { if (e.key === 'Escape') setEditingSection(null); }}
+                    placeholder="Pull quote text…"
+                    className="w-full text-center text-[18px] font-semibold leading-snug text-[#16423c] resize-none outline-none bg-transparent"
+                    style={{ fontFamily: 'var(--font-merriweather), serif' }}
+                    rows={2}
+                  />
+                  <input
+                    value={block.attribution ?? ''}
+                    onChange={e => setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, attribution: e.target.value } : b))}
+                    placeholder="— Attribution (optional)"
+                    className="text-[11px] text-center text-[#6b7280] bg-transparent outline-none"
+                  />
+                </div>
+              ) : (
+                <div
+                  onClick={() => { setEditingSection(block.id); setEditedContent(prev => ({ ...prev, [block.id]: block.content })); }}
+                  className="cursor-text"
+                >
+                  <p className="text-[18px] font-semibold leading-snug text-[#16423c]" style={{ fontFamily: 'var(--font-merriweather), serif' }}>
+                    {block.content
+                      ? `❝ ${block.content} ❞`
+                      : <span className="text-gray-300 text-[14px] font-normal">Pull quote — click to edit</span>
+                    }
+                  </p>
+                  {block.attribution && (
+                    <p className="text-[11px] text-[#6b7280] mt-2">— {block.attribution}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* CALLOUT BLOCK */}
+          {block.type === 'callout' && (() => {
+            const color = block.calloutColor ?? 'yellow';
+            const scheme = CALLOUT_COLORS[color] ?? CALLOUT_COLORS.yellow;
+            const icons = ['💡','📘','✅','⚠️','✨','🎯','🔔','💪'];
+            return (
+              <div
+                className="flex items-start gap-3 rounded-xl px-4 py-3 border"
+                style={{ backgroundColor: scheme.bg, borderColor: scheme.border }}
+              >
+                {/* Emoji toggle */}
+                <button
+                  onClick={() => {
+                    const cur = icons.indexOf(block.calloutIcon ?? scheme.icon);
+                    setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, calloutIcon: icons[(cur + 1) % icons.length] } : b));
+                  }}
+                  className="text-[20px] leading-none flex-shrink-0 hover:scale-110 transition-transform"
+                  title="Click to change icon"
+                >
+                  {block.calloutIcon ?? scheme.icon}
+                </button>
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                  {isEditing ? (
+                    <textarea
+                      autoFocus
+                      value={editedContent[block.id] ?? block.content}
+                      onChange={e => setEditedContent(prev => ({ ...prev, [block.id]: e.target.value }))}
+                      onBlur={() => {
+                        if (editedContent[block.id] !== undefined) {
+                          setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, content: editedContent[block.id] } : b));
+                        }
+                        setEditingSection(null);
+                      }}
+                      onKeyDown={e => { if (e.key === 'Escape') setEditingSection(null); }}
+                      placeholder="Callout text…"
+                      className="w-full text-[13px] leading-relaxed text-[#374151] resize-none outline-none bg-transparent min-h-[20px]"
+                      rows={2}
+                    />
+                  ) : (
+                    <p
+                      onClick={() => { setEditingSection(block.id); setEditedContent(prev => ({ ...prev, [block.id]: block.content })); }}
+                      className="text-[13px] leading-relaxed text-[#374151] cursor-text"
+                    >
+                      {block.content || <span className="text-gray-300 italic">Callout text — click to edit</span>}
+                    </p>
+                  )}
+                </div>
+                {/* Color picker */}
+                <div className="flex gap-1 flex-shrink-0">
+                  {Object.entries(CALLOUT_COLORS).map(([key, s]) => (
+                    <button
+                      key={key}
+                      onClick={() => setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, calloutColor: key } : b))}
+                      className="w-3.5 h-3.5 rounded-full border transition-transform hover:scale-110"
+                      style={{ backgroundColor: s.border, borderColor: (block.calloutColor ?? 'yellow') === key ? '#374151' : 'transparent' }}
+                      title={key}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Block toolbar (type switcher + delete) */}
@@ -539,12 +747,69 @@ function BlockItem({
                       {cmd.label}
                     </button>
                   ))}
+                      {block.type === 'paragraph' && (
+                        <>
+                          <div className="my-1 h-px bg-gray-100" />
+                          <button
+                            onClick={() => {
+                              setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, dropCap: !b.dropCap } : b));
+                              setBlockTypeMenuId(null);
+                            }}
+                            className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${block.dropCap ? 'bg-[#16423c] text-white' : 'text-[#374151] hover:bg-gray-50'}`}
+                          >
+                            <span className="w-6 text-center font-serif text-[14px] font-bold">A</span>
+                            Drop Cap
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+              {/* Anchor Button */}
+              {(block.type === 'h1' || block.type === 'h2' || block.type === 'h3') && (
+                <div className="relative">
+                  <button
+                    onClick={e => { e.stopPropagation(); setAnchorMenuId(anchorMenuId === block.id ? null : block.id); }}
+                    className={`w-7 h-7 flex items-center justify-center rounded-lg border transition-colors text-[10px] font-mono font-bold ${block.anchorId ? 'border-[#fd6333] bg-[#fd63330f] text-[#fd6333]' : 'border-gray-200 bg-white text-[#6b7280] hover:border-[#fd6333] hover:text-[#fd6333]'}`}
+                    title="Set anchor / jump link"
+                  >#</button>
+                  {anchorMenuId === block.id && (
+                    <>
+                      <div className="fixed inset-0 z-30" onClick={() => setAnchorMenuId(null)} />
+                      <div className="absolute right-0 top-full mt-1 z-40 bg-white border border-gray-200 rounded-xl shadow-xl p-3 w-52">
+                        <p className="text-[10px] text-[#6b7280] font-medium mb-1.5 uppercase tracking-wide">Anchor / Jump Link</p>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[#fd6333] font-mono text-[12px]">#</span>
+                          <input
+                            autoFocus
+                            value={block.anchorId ?? ''}
+                            onChange={e => {
+                              const slug = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
+                              setActiveBlocks((prev: Block[]) => prev.map(b => b.id === block.id ? { ...b, anchorId: slug } : b));
+                            }}
+                            placeholder="e.g. conclusion"
+                            className="flex-1 text-[12px] text-[#374151] outline-none border-b border-gray-200 focus:border-[#fd6333] pb-0.5 bg-transparent"
+                          />
+                        </div>
+                        {block.anchorId && (
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(`#${block.anchorId}`);
+                            }}
+                            className="mt-2 w-full text-[10px] text-[#6b7280] hover:text-[#fd6333] flex items-center gap-1 transition-colors"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            Copy #{block.anchorId}
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
-              </>
-            )}
-          </div>
-          {/* Delete */}
-          <button
+              )}
+              {/* Delete */}
+              <button
             onClick={() => setActiveBlocks((prev: Block[]) => prev.filter(b => b.id !== block.id))}
             className="w-7 h-7 flex items-center justify-center rounded-lg border border-gray-200 bg-white text-[#9ca3af] hover:border-red-300 hover:text-red-400 transition-colors"
           >
@@ -856,6 +1121,15 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
   const [formatToolbarBlockId, setFormatToolbarBlockId] = useState<string | null>(null);
   const [linkInputBlockId, setLinkInputBlockId] = useState<string | null>(null);
   const [linkInputValue, setLinkInputValue] = useState('');
+  const [postMetaOpen, setPostMetaOpen] = useState(false);
+  const [postMeta, setPostMeta] = useState({
+    ogTitle: MOCK.blog.title ?? 'How AI Is Reshaping the Future of Work',
+    ogDescription: MOCK.blog.metaDescription ?? '',
+    ogImage: '',
+    canonicalUrl: '',
+  });
+  const [snapshots, setSnapshots] = useState<Array<{ id: string; timestamp: number; label: string; blocks: Block[] }>>([]);
+  const [anchorMenuId, setAnchorMenuId] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setGaugeAnimated(true), 300);
@@ -939,7 +1213,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          backgroundImage: "radial-gradient(circle at 1px 1px, rgba(0,0,0,0.054) 1px, transparent 0)",
+          backgroundImage: "radial-gradient(circle at 1px 1px, rgba(0,0,0,0.065) 1px, transparent 0)",
           backgroundSize: "28px 28px",
         }}
       />
@@ -1863,6 +2137,13 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                         </button>
                       ))}
                     </div>
+                    <button
+                      onClick={() => setPostMetaOpen(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200 bg-white text-[12px] font-medium text-[#6b7280] hover:border-[#16423c] hover:text-[#16423c] transition-colors ml-2"
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                      Post Settings
+                    </button>
                   </div>
 
                   {/* Card Body */}
@@ -1896,6 +2177,8 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                           setLinkInputBlockId={setLinkInputBlockId}
                           linkInputValue={linkInputValue}
                           setLinkInputValue={setLinkInputValue}
+                          anchorMenuId={anchorMenuId}
+                          setAnchorMenuId={setAnchorMenuId}
                         />
                       ))}
                     </Reorder.Group>
@@ -2101,9 +2384,193 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                     </div>
                   </div>
 
+                  {/* VERSION HISTORY */}
+                  <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] flex flex-col">
+                    <div className="px-4 py-3 border-b border-gray-50 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-[#16423c]" />
+                        <span className="text-[10px] font-bold text-[#374151] uppercase tracking-[0.08em]">Version History</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const snap = {
+                            id: genId(),
+                            timestamp: Date.now(),
+                            label: `Snapshot ${snapshots.length + 1}`,
+                            blocks: JSON.parse(JSON.stringify(activeBlocks)) as Block[],
+                          };
+                          setSnapshots(prev => [snap, ...prev].slice(0, 10));
+                        }}
+                        className="text-[10px] font-medium text-[#fd6333] hover:text-[#e5572e] transition-colors"
+                      >
+                        + Save snapshot
+                      </button>
+                    </div>
+                    <div className="p-3 flex flex-col gap-2">
+                      {snapshots.length === 0 ? (
+                        <p className="text-[11px] text-[#9ca3af] text-center py-3">No snapshots yet. Save one to track your progress.</p>
+                      ) : (
+                        snapshots.map((snap, i) => (
+                          <div key={snap.id} className="flex items-center gap-2 group">
+                            <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                              <span className="text-[11px] font-medium text-[#374151] truncate">{snap.label}</span>
+                              <span className="text-[10px] text-[#9ca3af]">{formatTimeAgo(snap.timestamp)} · {snap.blocks.length} blocks</span>
+                            </div>
+                            <button
+                              onClick={() => {
+                                if (confirm(`Restore "${snap.label}"? This will replace the current canvas.`)) {
+                                  setVersionBlocks(prev => ({ ...prev, [activeBlogVersion]: JSON.parse(JSON.stringify(snap.blocks)) }));
+                                }
+                              }}
+                              className="opacity-0 group-hover:opacity-100 text-[10px] font-medium text-[#fd6333] hover:text-[#e5572e] transition-all flex-shrink-0"
+                            >
+                              Restore
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
                 </div>
               </div>
             )}
+
+            {/* Post Settings Slide-out Panel */}
+            <AnimatePresence>
+              {postMetaOpen && (
+                <>
+                  {/* Backdrop */}
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-40 bg-black/10"
+                    onClick={() => setPostMetaOpen(false)}
+                  />
+                  {/* Panel */}
+                  <motion.div
+                    initial={{ x: '100%' }}
+                    animate={{ x: 0 }}
+                    exit={{ x: '100%' }}
+                    transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                    className="fixed right-0 top-0 bottom-0 z-50 w-[380px] bg-white shadow-2xl flex flex-col"
+                  >
+                    {/* Panel Header */}
+                    <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+                      <div>
+                        <h2 className="text-[14px] font-semibold text-[#16423c]">Post Settings</h2>
+                        <p className="text-[11px] text-[#9ca3af] mt-0.5">SEO metadata & social preview</p>
+                      </div>
+                      <button onClick={() => setPostMetaOpen(false)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-[#9ca3af] hover:text-[#374151] transition-colors">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                      </button>
+                    </div>
+                    {/* Panel Scroll Body */}
+                    <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+                      
+                      {/* Section: Canonical URL */}
+                      <div>
+                        <h3 className="text-[11px] font-semibold text-[#374151] uppercase tracking-wider mb-3">Canonical URL</h3>
+                        <div className="space-y-2">
+                          <input
+                            type="url"
+                            value={postMeta.canonicalUrl}
+                            onChange={e => setPostMeta(prev => ({ ...prev, canonicalUrl: e.target.value }))}
+                            placeholder="https://yourdomain.com/article-slug"
+                            className="w-full text-[12px] px-3 py-2 rounded-xl border border-gray-200 outline-none focus:border-[#fd6333] text-[#374151] placeholder-gray-300 transition-colors"
+                          />
+                          <p className="text-[10px] text-[#9ca3af]">Tells search engines the preferred URL for this post. Leave blank to use the auto-generated URL.</p>
+                        </div>
+                      </div>
+
+                      {/* Section: Social Preview */}
+                      <div>
+                        <h3 className="text-[11px] font-semibold text-[#374151] uppercase tracking-wider mb-3">Social Preview (Open Graph)</h3>
+                        <div className="space-y-3">
+                          <div>
+                            <label className="text-[11px] text-[#6b7280] font-medium mb-1 block">OG Title</label>
+                            <input
+                              value={postMeta.ogTitle}
+                              onChange={e => setPostMeta(prev => ({ ...prev, ogTitle: e.target.value }))}
+                              className="w-full text-[12px] px-3 py-2 rounded-xl border border-gray-200 outline-none focus:border-[#fd6333] text-[#374151] transition-colors"
+                            />
+                            <p className="text-[10px] text-[#9ca3af] mt-1">{postMeta.ogTitle.length}/60 chars</p>
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-[#6b7280] font-medium mb-1 block">OG Description</label>
+                            <textarea
+                              value={postMeta.ogDescription}
+                              onChange={e => setPostMeta(prev => ({ ...prev, ogDescription: e.target.value }))}
+                              rows={3}
+                              placeholder="Brief description for social sharing…"
+                              className="w-full text-[12px] px-3 py-2 rounded-xl border border-gray-200 outline-none focus:border-[#fd6333] text-[#374151] resize-none placeholder-gray-300 transition-colors"
+                            />
+                            <p className="text-[10px] text-[#9ca3af]">{postMeta.ogDescription.length}/160 chars</p>
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-[#6b7280] font-medium mb-1 block">OG Image URL</label>
+                            <input
+                              value={postMeta.ogImage}
+                              onChange={e => setPostMeta(prev => ({ ...prev, ogImage: e.target.value }))}
+                              placeholder="https://…"
+                              className="w-full text-[12px] px-3 py-2 rounded-xl border border-gray-200 outline-none focus:border-[#fd6333] text-[#374151] placeholder-gray-300 transition-colors"
+                            />
+                          </div>
+                          
+                          {/* Live Preview Card — X/Twitter style */}
+                          <div>
+                            <p className="text-[10px] text-[#9ca3af] mb-2 font-medium">Preview on X / Twitter</p>
+                            <div className="rounded-xl overflow-hidden border border-gray-200 bg-white">
+                              {postMeta.ogImage ? (
+                                <div className="aspect-[2/1] bg-gray-100 overflow-hidden">
+                                  <img src={postMeta.ogImage} alt="" className="w-full h-full object-cover" onError={e => (e.currentTarget.style.display = 'none')} />
+                                </div>
+                              ) : (
+                                <div className="aspect-[2/1] bg-gradient-to-br from-[#16423c] to-[#1e5c54] flex items-center justify-center">
+                                  <span className="text-white/30 text-[11px]">No image set</span>
+                                </div>
+                              )}
+                              <div className="px-3 py-2 border-t border-gray-100">
+                                <p className="text-[11px] text-[#9ca3af] truncate">{postMeta.canonicalUrl || 'yourdomain.com'}</p>
+                                <p className="text-[12px] font-semibold text-[#111827] truncate mt-0.5">{postMeta.ogTitle || 'Post title'}</p>
+                                <p className="text-[11px] text-[#6b7280] line-clamp-2 mt-0.5">{postMeta.ogDescription || 'Post description will appear here'}</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Preview Card — LinkedIn style */}
+                          <div>
+                            <p className="text-[10px] text-[#9ca3af] mb-2 font-medium">Preview on LinkedIn</p>
+                            <div className="rounded-xl overflow-hidden border border-gray-200 bg-white flex">
+                              <div className="w-[100px] flex-shrink-0 bg-gradient-to-br from-[#16423c] to-[#1e5c54] flex items-center justify-center overflow-hidden">
+                                {postMeta.ogImage
+                                  ? <img src={postMeta.ogImage} alt="" className="w-full h-full object-cover" onError={e => (e.currentTarget.style.display = 'none')} />
+                                  : <span className="text-white/30 text-[10px]">No image</span>
+                                }
+                              </div>
+                              <div className="px-3 py-2 flex-1 min-w-0">
+                                <p className="text-[12px] font-semibold text-[#111827] line-clamp-2 leading-snug">{postMeta.ogTitle || 'Post title'}</p>
+                                <p className="text-[10px] text-[#9ca3af] mt-1 truncate">{postMeta.canonicalUrl || 'yourdomain.com'}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Panel Footer */}
+                    <div className="px-5 py-4 border-t border-gray-100 flex-shrink-0">
+                      <button
+                        onClick={() => setPostMetaOpen(false)}
+                        className="w-full py-2.5 rounded-xl bg-[#16423c] text-white text-[13px] font-semibold hover:bg-[#1e5c54] transition-colors"
+                      >
+                        Save Settings
+                      </button>
+                    </div>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
 
 
           </motion.div>
