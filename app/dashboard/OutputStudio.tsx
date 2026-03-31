@@ -112,24 +112,37 @@ const MOCK = {
   },
   blog: {
     qualityScore: 87,
+    readingLevel: "Grade 9",
+    metaDescription: "A deep-dive into how AI cost curves are democratizing enterprise intelligence — and what it means for your workflow in 2025.",
     title: "The Future of AI in 2025: What Nobody's Talking About",
     keywords: ["artificial intelligence", "compute costs", "multimodal AI", "workflow automation", "AI integration", "future of work", "machine learning", "LLM"],
-    sections: [
+    keywordDensity: {
+      "artificial intelligence": 3.2,
+      "compute costs": 1.8,
+      "multimodal AI": 1.4,
+      "future of work": 1.1,
+      "workflow automation": 0.9,
+    },
+    versions: [
       {
-        title: "The Silent Revolution",
-        content: "While headlines focus on dramatic AI breakthroughs, a quieter transformation is reshaping industries at their foundation. The democratization of compute — a trend accelerating faster than most analysts predict — is placing enterprise-grade AI capabilities in the hands of startups and individual creators alike.",
+        id: "v1",
+        template: "SEO Optimized",
+        sections: [
+          { title: "The Silent Revolution", content: "While headlines focus on dramatic AI breakthroughs, a quieter transformation is reshaping industries at their foundation. The democratization of compute — a trend accelerating faster than most analysts predict — is placing enterprise-grade AI capabilities in the hands of startups and individual creators alike." },
+          { title: "The Economics of Intelligence", content: "The cost curve of AI inference has followed a trajectory reminiscent of solar energy: each doubling of capacity brings roughly a 40% reduction in cost. What required a $2M engineering budget in 2022 can be replicated today with open-source tools and $50K in cloud credits." },
+          { title: "Multimodal AI: The Real Frontier", content: "Text-only AI was always a limited lens on human cognition. The rise of genuinely capable multimodal systems — models that see, hear, and reason across modalities simultaneously — represents the most significant capability jump since the transformer architecture itself." },
+          { title: "What This Means for You", content: "The creators, marketers, and knowledge workers who will thrive in the AI-augmented economy share one trait: they're learning to direct AI with precision rather than compete with it on raw output volume. The skill premium is shifting from production to curation, from execution to vision." },
+        ],
       },
       {
-        title: "The Economics of Intelligence",
-        content: "The cost curve of AI inference has followed a trajectory reminiscent of solar energy: each doubling of capacity brings roughly a 40% reduction in cost. What required a $2M engineering budget in 2022 can be replicated today with open-source tools and $50K in cloud credits.",
-      },
-      {
-        title: "Multimodal AI: The Real Frontier",
-        content: "Text-only AI was always a limited lens on human cognition. The rise of genuinely capable multimodal systems — models that see, hear, and reason across modalities simultaneously — represents the most significant capability jump since the transformer architecture itself.",
-      },
-      {
-        title: "What This Means for You",
-        content: "The creators, marketers, and knowledge workers who will thrive in the AI-augmented economy share one trait: they're learning to direct AI with precision rather than compete with it on raw output volume. The skill premium is shifting from production to curation, from execution to vision.",
+        id: "v2",
+        template: "Storytelling",
+        sections: [
+          { title: "A Quiet Shift", content: "It didn't arrive with fanfare. No press conference, no product launch event. The revolution in artificial intelligence crept into the world through server farms, API invoices, and the quiet hum of inference engines spinning up at a fraction of yesterday's cost." },
+          { title: "The Price Nobody Predicted", content: "In 2022, training a frontier model cost the GDP of a small city. By 2025, the same capability sits behind a $20/month API key. The economists who study technology adoption call this an 'S-curve inflection'. Everyone else just calls it a surprise." },
+          { title: "Seeing, Hearing, Thinking", content: "The moment AI stopped being a text box and started seeing images, listening to audio, and reasoning across modalities — that's when the real story began. Not a tool upgrade. A cognitive leap." },
+          { title: "The New Skill", content: "The people quietly winning aren't the ones who know the most code. They're the ones who've learned a stranger skill: how to think alongside a machine. Curation over creation. Vision over execution. Direction over output." },
+        ],
       },
     ],
   },
@@ -240,6 +253,13 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
   const [campaignTitles, setCampaignTitles] = useState<Record<string, string>>(
     Object.fromEntries(MOCK_CAMPAIGNS.map(c => [c.id, c.title]))
   );
+
+  // Blog tab states
+  const [activeBlogVersion, setActiveBlogVersion] = useState<string>("v1");
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({ "0": true });
+  const [editingSection, setEditingSection] = useState<string | null>(null);
+  const [editedContent, setEditedContent] = useState<Record<string, string>>({});
+  const [blogSchedulePlatform, setBlogSchedulePlatform] = useState<string>("WordPress");
 
   useEffect(() => {
     const t = setTimeout(() => setGaugeAnimated(true), 300);
@@ -1070,167 +1090,314 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
             )}
 
             {activeTab === "blog" && (
-              <div className="max-w-[1200px] mx-auto px-6 py-8">
-                {/* Template Switcher */}
-                <div className="flex gap-2 mb-6">
-                  {["SEO Optimized", "Storytelling", "Bullet Point Summary"].map((template) => {
-                    const isActive = blogTemplate === template;
+              <div className="max-w-[1200px] mx-auto px-6 py-8 flex gap-6 h-[calc(100vh-165px)]">
+                
+                {/* LEFT SIDEBAR */}
+                <div className="w-[192px] shrink-0 bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-4 flex flex-col gap-1 overflow-y-auto">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-[#9ca3af] mb-2 px-1">TEMPLATE</div>
+                  {[
+                    { name: "SEO Optimized", vid: "v1" },
+                    { name: "Storytelling", vid: "v2" },
+                    { name: "Bullet Point Summary", vid: "v1" },
+                    { name: "Tech Deep Dive", vid: "v2" },
+                  ].map((tpl) => {
+                    const currentTplName = MOCK.blog.versions.find(v => v.id === activeBlogVersion)?.template;
+                    const isActive = currentTplName === tpl.name || (activeBlogVersion === tpl.vid && currentTplName !== "SEO Optimized" && currentTplName !== "Storytelling" && false); // Fallback: just use blogTemplate
+                    const isReallyActive = blogTemplate === tpl.name || (MOCK.blog.versions.find(v => v.id === activeBlogVersion)?.template === tpl.name);
+                    
                     return (
                       <button
-                        key={template}
-                        onClick={() => setBlogTemplate(template)}
-                        className={`rounded-full px-4 py-1.5 text-[13px] transition-colors ${
-                          isActive
-                            ? "bg-[#16423c] text-white font-semibold"
-                            : "border border-[#e5e7eb] text-[#6b7280] font-medium hover:bg-gray-50"
-                        }`}
+                        key={tpl.name}
+                        onClick={() => {
+                          setActiveBlogVersion(tpl.vid);
+                          setBlogTemplate(tpl.name);
+                        }}
+                        className={isReallyActive 
+                          ? "bg-[#16423c] text-white font-semibold rounded-xl px-3 py-2 text-[13px] w-full text-left" 
+                          : "text-[#374151] font-medium rounded-xl px-3 py-2 text-[13px] w-full text-left hover:bg-gray-50"}
                       >
-                        {template}
+                        {tpl.name}
                       </button>
                     );
                   })}
+                  <div className="mt-auto" />
+                  <button className="w-full rounded-xl bg-[#fd63330f] border border-[#fd633330] text-[#fd6333] text-[12px] font-semibold py-2.5 flex items-center justify-center gap-2 mt-auto">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+                    </svg>
+                    Generate New · 5 credits
+                  </button>
                 </div>
 
-                <div className="flex gap-6">
-                  {/* Left — Blog Content */}
-                  <div className="flex-1 bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-8">
-                    <h2 
-                      className="text-[24px] font-black leading-snug text-[#16423c] mb-8"
-                      style={{ fontFamily: 'var(--font-merriweather), serif' }}
+                {/* CENTER CANVAS */}
+                <div className="flex-1 bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] flex flex-col overflow-y-auto">
+                  
+                  {/* Card Header */}
+                  <div className="px-6 py-5 border-b border-gray-50 flex items-center gap-4">
+                    <div 
+                      onClick={() => setSelectedItems(prev => ({ ...prev, blog: !prev.blog }))}
+                      className={`w-4 h-4 rounded border-2 shrink-0 cursor-pointer flex items-center justify-center transition-colors ${selectedItems.blog ? 'border-[#16423c] bg-[#16423c]' : 'border-gray-300'}`}
                     >
-                      {MOCK.blog.title}
-                    </h2>
-                    
-                    <div className="flex flex-col">
-                      {MOCK.blog.sections.map((section, idx) => (
-                        <div key={idx} className="mb-6 last:mb-0">
-                          <h3 
-                            className="text-[16px] font-bold text-[#16423c] mb-2"
-                            style={{ fontFamily: 'var(--font-merriweather), serif' }}
-                          >
-                            {section.title}
-                          </h3>
-                          <p 
-                            className="text-[14px] leading-relaxed text-[#374151]"
-                            style={{ fontFamily: 'var(--font-merriweather), serif' }}
-                          >
-                            {section.content}
-                          </p>
+                      {selectedItems.blog && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                    </div>
+
+                    {editingTitle === "blog-title" ? (
+                      <input 
+                        autoFocus
+                        defaultValue={MOCK.blog.title}
+                        onBlur={() => setEditingTitle(null)}
+                        onKeyDown={e => e.key === 'Enter' && setEditingTitle(null)}
+                        className="text-[17px] font-bold text-[#16423c] bg-transparent border-b border-[#fd6333] outline-none flex-1"
+                      />
+                    ) : (
+                      <span 
+                        onClick={() => setEditingTitle("blog-title")}
+                        className="text-[17px] font-bold text-[#16423c] cursor-text flex-1 truncate"
+                      >
+                        {MOCK.blog.title}
+                      </span>
+                    )}
+
+                    <div className="flex flex-col items-center justify-center mr-2">
+                      <div className="relative w-[32px] h-[32px]">
+                        <svg className="w-full h-full transform rotate-[135deg]" viewBox="0 0 100 100">
+                          <circle cx="50" cy="50" r="40" stroke="#f0f0f0" strokeWidth="8" fill="none" pathLength="100" strokeDasharray="75 100" strokeLinecap="round" />
+                          <motion.circle
+                            cx="50" cy="50" r="40"
+                            stroke="#fd6333" strokeWidth="8" fill="none"
+                            pathLength="100" strokeDasharray="75 100" strokeLinecap="round"
+                            initial={{ strokeDashoffset: 75 }}
+                            animate={{ strokeDashoffset: gaugeAnimated ? 75 - MOCK.blog.qualityScore * 0.75 : 75 }}
+                            transition={{ duration: 1, ease: "easeOut" }}
+                          />
+                        </svg>
+                      </div>
+                      <span className="text-[11px] font-bold text-[#16423c] leading-none mt-1">{MOCK.blog.qualityScore}</span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 mr-2">
+                      <div className="w-2 h-2 rounded-full bg-green-400" />
+                      <span className="text-[12px] text-[#6b7280]">Ready</span>
+                    </div>
+
+                    <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-full border border-gray-100">
+                      {["v1", "v2"].map(v => (
+                        <button
+                          key={v}
+                          onClick={() => setActiveBlogVersion(v)}
+                          className={activeBlogVersion === v 
+                            ? "bg-[#16423c] text-white text-[11px] font-semibold px-3 py-1 rounded-full transition-colors" 
+                            : "text-[#6b7280] text-[11px] font-medium px-3 py-1 rounded-full hover:bg-gray-100 transition-colors"}
+                        >
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Card Body */}
+                  <div className="px-6 py-6 flex-1">
+                    {MOCK.blog.versions.find(v => v.id === activeBlogVersion)?.sections.map((section, idx, sections) => {
+                      const strIdx = String(idx);
+                      const isExpanded = expandedSections[strIdx] ?? false;
+
+                      return (
+                        <React.Fragment key={idx}>
+                          <div className="flex flex-col mb-1">
+                            <div 
+                              className="flex items-center gap-3 cursor-pointer py-2 group"
+                              onClick={() => setExpandedSections(prev => ({ ...prev, [strIdx]: !prev[strIdx] }))}
+                            >
+                              <svg 
+                                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                                style={{ transform: `rotate(${isExpanded ? 90 : 0}deg)`, transition: 'transform 0.2s' }}
+                              >
+                                <polyline points="9 18 15 12 9 6"/>
+                              </svg>
+                              <h3 className="text-[14px] font-bold text-[#16423c] select-none" style={{ fontFamily: 'var(--font-merriweather), serif' }}>
+                                {section.title}
+                              </h3>
+                            </div>
+
+                            {isExpanded && (
+                              <div className="pl-6 pb-2 pt-1">
+                                {editingSection === strIdx ? (
+                                  <textarea
+                                    autoFocus
+                                    value={editedContent[strIdx] ?? section.content}
+                                    onChange={e => setEditedContent(prev => ({ ...prev, [strIdx]: e.target.value }))}
+                                    onBlur={() => setEditingSection(null)}
+                                    className="w-full text-[14px] leading-relaxed text-[#374151] resize-none outline-none border border-[#fd633340] rounded-xl p-3 focus:border-[#fd6333] min-h-[80px]"
+                                    style={{ fontFamily: 'var(--font-merriweather), serif' }}
+                                  />
+                                ) : (
+                                  <p 
+                                    onClick={() => {
+                                      setEditingSection(strIdx);
+                                      setEditedContent(prev => ({ ...prev, [strIdx]: prev[strIdx] ?? section.content }));
+                                    }}
+                                    className="text-[14px] leading-relaxed text-[#374151] cursor-text hover:bg-[#fd63330a] rounded-lg px-2 py-1 -mx-2 -my-1 transition-colors"
+                                    style={{ fontFamily: 'var(--font-merriweather), serif' }}
+                                  >
+                                    {editedContent[strIdx] ?? section.content}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {idx < sections.length - 1 && (
+                            <button className="flex items-center gap-2 my-3 w-full group">
+                              <div className="flex-1 h-px bg-gray-100 group-hover:bg-[#fd633330] transition-colors" />
+                              <span className="w-7 h-7 rounded-full border border-dashed border-gray-300 group-hover:border-[#fd6333] flex items-center justify-center text-[#9ca3af] group-hover:text-[#fd6333] text-[16px] transition-colors pb-0.5">+</span>
+                              <div className="flex-1 h-px bg-gray-100 group-hover:bg-[#fd633330] transition-colors" />
+                            </button>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+
+                  {/* Card Footer */}
+                  <div className="mt-auto px-6 py-4 bg-gray-50/50 border-t border-gray-100 flex items-center gap-3">
+                    <div 
+                      onClick={() => setSelectedItems(prev => ({ ...prev, blog: !prev.blog }))}
+                      className={`w-5 h-5 rounded-md border-2 cursor-pointer flex items-center justify-center transition-colors shrink-0 ${selectedItems.blog ? 'border-[#16423c] bg-[#16423c]' : 'border-gray-300 hover:border-gray-400'}`}
+                    >
+                      {selectedItems.blog && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                    </div>
+                    <span className="text-[13px] font-semibold text-[#16423c] cursor-pointer" onClick={() => setSelectedItems(prev => ({ ...prev, blog: !prev.blog }))}>
+                      Schedule for Publishing
+                    </span>
+
+                    <select 
+                      value={blogSchedulePlatform}
+                      onChange={e => setBlogSchedulePlatform(e.target.value)}
+                      className="ml-2 text-[12px] border border-gray-200 rounded-lg px-2 py-1 outline-none focus:border-[#fd6333] text-[#374151] bg-white cursor-pointer"
+                    >
+                      {["WordPress", "Medium", "Ghost", "Dev.to"].map(p => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+
+                    <div className="flex-1" />
+
+                    <div className="flex items-center gap-1.5 text-[#9ca3af]">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                      <span className="text-[11px]">{scheduledTimes.blog ? scheduledTimes.blog : `AI suggests: ${AI_SUGGESTED_TIMES.blog}`}</span>
+                    </div>
+
+                    <div className="relative ml-1">
+                      <button 
+                        className="text-[12px] font-semibold text-[#fd6333] bg-white border border-[#fd633330] px-4 py-1.5 rounded-lg hover:bg-[#fd63330f] transition-colors"
+                        onClick={(e) => { e.stopPropagation(); setOpenSchedulePicker("blog"); }}
+                      >
+                        {scheduledTimes.blog ? 'Change Time' : 'Set Time'}
+                      </button>
+                      {renderSchedulePopover("blog", "blog", true, true)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* RIGHT RAIL */}
+                <div className="w-[260px] shrink-0 flex flex-col gap-4 overflow-y-auto">
+                  
+                  {/* 1. SEO Score */}
+                  <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-5">
+                    <div className="text-[11px] font-bold uppercase tracking-widest text-[#9ca3af] mb-4 text-center">
+                      SEO SCORE
+                    </div>
+                    <div className="flex flex-col items-center justify-center">
+                      <div className="relative w-[96px] h-[96px]">
+                        <svg className="w-full h-full transform rotate-[135deg]" viewBox="0 0 100 100">
+                          <circle cx="50" cy="50" r="40" stroke="#f0f0f0" strokeWidth="8" fill="none" pathLength="100" strokeDasharray="75 100" strokeLinecap="round" />
+                          <motion.circle
+                            cx="50" cy="50" r="40"
+                            stroke="#fd6333" strokeWidth="8" fill="none"
+                            pathLength="100" strokeDasharray="75 100" strokeLinecap="round"
+                            initial={{ strokeDashoffset: 75 }}
+                            animate={{ strokeDashoffset: gaugeAnimated ? 75 - MOCK.blog.qualityScore * 0.75 : 75 }}
+                            transition={{ duration: 1, ease: "easeOut" }}
+                          />
+                        </svg>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center pt-1">
+                          <span className="text-[28px] font-black text-[#16423c] leading-none">
+                            {MOCK.blog.qualityScore}
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-[11px] text-[#9ca3af] mt-1 font-medium">out of 100</span>
+                    </div>
+                  </div>
+
+                  {/* 2. Content Metrics */}
+                  <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] px-5 py-4">
+                    <div className="text-[11px] font-bold uppercase tracking-widest text-[#9ca3af] mb-3">
+                      CONTENT METRICS
+                    </div>
+                    <div className="flex items-center justify-between py-1.5 border-b border-gray-50">
+                      <span className="text-[12px] text-[#6b7280]">Reading Level</span>
+                      <span className="text-[12px] font-semibold text-[#16423c]">{MOCK.blog.readingLevel}</span>
+                    </div>
+                    <div className="flex items-center justify-between py-1.5 border-b border-gray-50 border-0">
+                      <span className="text-[12px] text-[#6b7280]">Word Count</span>
+                      <span className="text-[12px] font-semibold text-[#16423c]">~1,240 words</span>
+                    </div>
+                  </div>
+
+                  {/* 3. Keyword Density */}
+                  <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] px-5 py-4">
+                    <div className="text-[11px] font-bold uppercase tracking-widest text-[#9ca3af] mb-3">
+                      KEYWORD DENSITY
+                    </div>
+                    <div>
+                      {Object.entries(MOCK.blog.keywordDensity).map(([kw, density]) => (
+                        <div key={kw} className="mb-3 last:mb-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[12px] text-[#374151] font-medium">{kw}</span>
+                            <span className="text-[11px] font-semibold text-[#fd6333]">{density}%</span>
+                          </div>
+                          <div className="w-full h-1 rounded-full bg-[#fd63330f] overflow-hidden">
+                            <div 
+                              className="h-full bg-[#fd6333] rounded-full" 
+                              style={{ width: `${Math.min((density / 4) * 100, 100)}%` }} 
+                            />
+                          </div>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Right — SEO Insights Sidebar */}
-                  <div className="w-72 flex flex-col gap-4 shrink-0">
-                    
-                    {/* NEW PUBLISH SCHEDULE CARD */}
-                    <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-5 relative">
-                      <div className="text-[12px] font-bold uppercase tracking-widest text-[#9ca3af] mb-4">
-                        PUBLISH SCHEDULE
-                      </div>
-                      <div className="flex items-center gap-2 mb-3 cursor-pointer" onClick={() => setSelectedItems(prev => ({ ...prev, blog: !prev.blog }))}>
-                        <div className={`w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors ${selectedItems.blog ? 'border-[#16423c] bg-[#16423c]' : 'border-gray-300'}`}>
-                          {selectedItems.blog && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-                        </div>
-                        <span className="text-[13px] font-semibold text-[#16423c]">Schedule for Publishing</span>
-                      </div>
-                      
-                      {scheduledTimes.blog ? (
-                        <div className="bg-[#f0fdf4] text-[#16a34a] text-[12px] font-semibold px-3 py-2 rounded-xl flex items-center gap-2 mb-3">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                          {scheduledTimes.blog}
-                        </div>
-                      ) : (
-                        <div className="text-[12px] text-[#9ca3af] italic mb-3">
-                          AI suggests: {AI_SUGGESTED_TIMES.blog}
-                        </div>
-                      )}
-
-                      <button 
-                        onClick={() => setOpenSchedulePicker("blog")}
-                        className="w-full bg-[#16423c] text-white text-[12px] font-semibold rounded-xl py-2 hover:opacity-90 flex items-center justify-center gap-2 transition-opacity"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                        Set Publish Time
-                      </button>
-                      
-                      {openSchedulePicker === "blog" && (
-                        <div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-2">
-                          <input type="time" id="time-blog" className="w-full text-[12px] border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#fd6333]" />
-                          <button 
-                            onClick={() => {
-                              setScheduledTimes(prev => ({ ...prev, blog: AI_SUGGESTED_TIMES.blog }));
-                              setOpenSchedulePicker(null);
-                            }}
-                            className="w-full text-[11px] text-[#fd6333] border border-[#fd633330] rounded-lg py-1 font-semibold hover:bg-[#fd63330f] flex items-center justify-center gap-1"
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
-                            AI Suggest
-                          </button>
-                          <button 
-                            onClick={() => {
-                              const val = (document.getElementById("time-blog") as HTMLInputElement)?.value;
-                              if (val) setScheduledTimes(prev => ({ ...prev, blog: val }));
-                              setOpenSchedulePicker(null);
-                            }}
-                            className="w-full bg-[#16423c] text-white text-[11px] font-semibold rounded-lg py-1 hover:opacity-90"
-                          >
-                            Confirm
-                          </button>
-                        </div>
-                      )}
+                  {/* 4. Meta Description */}
+                  <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] px-5 py-4">
+                    <div className="text-[11px] font-bold uppercase tracking-widest text-[#9ca3af] mb-3">
+                      META DESCRIPTION
                     </div>
-
-                    <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-5">
-                      <div className="text-[12px] font-bold uppercase tracking-widest text-[#9ca3af] mb-4 text-center">
-                        Quality Score
-                      </div>
-                      <div className="flex flex-col items-center justify-center">
-                        <div className="relative w-[120px] h-[120px]">
-                          <svg className="w-full h-full transform rotate-[135deg]" viewBox="0 0 100 100">
-                            <circle cx="50" cy="50" r="40" stroke="#f0f0f0" strokeWidth="8" fill="none" pathLength="100" strokeDasharray="75 100" strokeLinecap="round" />
-                            <motion.circle
-                              cx="50"
-                              cy="50"
-                              r="40"
-                              stroke="#fd6333"
-                              strokeWidth="8"
-                              fill="none"
-                              pathLength="100"
-                              strokeDasharray="75 100"
-                              strokeLinecap="round"
-                              initial={{ strokeDashoffset: 75 }}
-                              animate={{ strokeDashoffset: gaugeAnimated ? 75 - MOCK.blog.qualityScore * 0.75 : 75 }}
-                              transition={{ duration: 1, ease: "easeOut" }}
-                            />
-                          </svg>
-                          <div className="absolute inset-0 flex flex-col items-center justify-center pt-1">
-                            <span className="text-[32px] font-black text-[#16423c] leading-none">
-                              {MOCK.blog.qualityScore}
-                            </span>
-                          </div>
-                        </div>
-                        <span className="text-[11px] text-[#9ca3af] mt-1 font-medium">out of 100</span>
-                      </div>
-                    </div>
-
-                    <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-5">
-                      <div className="text-[12px] font-bold uppercase tracking-widest text-[#9ca3af] mb-4">
-                        Top Keywords
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {MOCK.blog.keywords.map((kw, i) => (
-                          <span 
-                            key={i} 
-                            className="bg-[#fd63330f] text-[#fd6333] text-[11px] font-semibold px-2.5 py-1 rounded-full border border-[#fd633320]"
-                          >
-                            {kw}
-                          </span>
-                        ))}
-                      </div>
+                    <p className="text-[12px] text-[#374151] leading-relaxed mb-2">
+                      {MOCK.blog.metaDescription}
+                    </p>
+                    <div className="text-[11px] text-[#9ca3af] font-medium">
+                      {MOCK.blog.metaDescription.length}/160 chars
                     </div>
                   </div>
+
+                  {/* 5. Top Keywords */}
+                  <div className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] px-5 py-4">
+                    <div className="text-[11px] font-bold uppercase tracking-widest text-[#9ca3af] mb-3">
+                      TOP KEYWORDS
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {MOCK.blog.keywords.map((kw, i) => (
+                        <span 
+                          key={i} 
+                          className="bg-[#fd63330f] text-[#fd6333] text-[11px] font-semibold px-2.5 py-1 rounded-full border border-[#fd633320]"
+                        >
+                          {kw}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
                 </div>
               </div>
             )}
