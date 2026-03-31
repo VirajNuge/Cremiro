@@ -27,6 +27,12 @@ function checkRateLimit(ip: string): boolean {
   const now = Date.now();
   const record = ipAttempts.get(ip);
   if (!record || record.resetAt < now) {
+    // Evict stale entries to prevent unbounded Map growth
+    if (ipAttempts.size > 10_000) {
+      for (const [key, val] of ipAttempts) {
+        if (val.resetAt < now) ipAttempts.delete(key);
+      }
+    }
     ipAttempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
     return true;
   }

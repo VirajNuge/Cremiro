@@ -197,14 +197,23 @@ function formatTimeAgo(ts: number): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function parseInlineMarkdown(text: string): string {
-  let result = text
+  // Escape HTML entities FIRST to prevent XSS, then apply markdown transforms
+  let result = escapeHtml(text)
     // Bold: **text**
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     // Italic: *text* (but not **)
     .replace(/(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
-    // Link: [text](url)
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-[#fd6333] underline hover:opacity-80">$1</a>');
+    // Link: [text](url) — only allow http(s) and mailto protocols
+    .replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:)[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-[#fd6333] underline hover:opacity-80">$1</a>');
   return result;
 }
 
@@ -535,6 +544,7 @@ function BlockItem({
                     src={`https://www.youtube.com/embed/${extractYouTubeId(block.url)}`}
                     className="w-full aspect-video"
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    sandbox="allow-scripts allow-same-origin allow-presentation"
                     allowFullScreen
                   />
                 </div>

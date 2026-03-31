@@ -17,10 +17,11 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const captchaRef = useRef<TurnstileInstance | null>(null);
+  const supabaseRef = useRef(createClient());
   const router = useRouter();
   const searchParams = useSearchParams();
   const justRegistered = searchParams.get("registered") === "1";
-  const supabase = createClient();
+  const supabase = supabaseRef.current;
 
   const resetCaptcha = () => {
     captchaRef.current?.reset();
@@ -178,8 +179,7 @@ function LoginForm() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm"
-                    style={{ focusRing: "#fd6333" } as any}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm focus:ring-[#fd6333]/50 focus:border-[#fd6333]"
                     placeholder="you@example.com"
                     disabled={loading}
                   />
