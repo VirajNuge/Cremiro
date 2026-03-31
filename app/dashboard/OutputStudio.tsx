@@ -327,7 +327,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          backgroundImage: "radial-gradient(circle at 1px 1px, rgba(0,0,0,0.045) 1px, transparent 0)",
+          backgroundImage: "radial-gradient(circle at 1px 1px, rgba(0,0,0,0.054) 1px, transparent 0)",
           backgroundSize: "28px 28px",
         }}
       />
