@@ -1,7 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, Reorder, useDragControls } from "framer-motion";
+import SubtitleOverlay, { type WordEntry, type SubtitleStyle } from "@/app/components/SubtitleOverlay";
+import TranscriptEditor from "@/app/components/TranscriptEditor";
 
 interface OutputStudioProps {
   onBack: () => void;
@@ -850,6 +853,29 @@ function BlockItem({
 
 const DEMO_FAILED = "c2-Shorts";
 
+// Mock word-level timing for demo / when no real output_data.words is available.
+// In production this is replaced by output_data.words from Supabase job_items.
+const MOCK_WORDS: WordEntry[] = [
+  { text: "The", start: 0.0, end: 0.2 },
+  { text: "future", start: 0.22, end: 0.55, highlight: true },
+  { text: "of", start: 0.57, end: 0.68 },
+  { text: "AI", start: 0.7, end: 1.1, emoji: "🤯" },
+  { text: "is", start: 1.12, end: 1.3 },
+  { text: "already", start: 1.32, end: 1.75 },
+  { text: "here", start: 1.77, end: 2.1 },
+  { text: "and", start: 2.2, end: 2.4 },
+  { text: "nobody", start: 2.42, end: 2.9 },
+  { text: "is", start: 2.92, end: 3.1 },
+  { text: "talking", start: 3.12, end: 3.55 },
+  { text: "about", start: 3.57, end: 3.9 },
+  { text: "it", start: 3.92, end: 4.1 },
+  { text: "but", start: 4.3, end: 4.5 },
+  { text: "you", start: 4.52, end: 4.75 },
+  { text: "need", start: 4.77, end: 5.0 },
+  { text: "to", start: 5.02, end: 5.15 },
+  { text: "know", start: 5.17, end: 5.6, highlight: true },
+];
+
 const AI_SUGGESTED_TIMES: Record<string, string> = {
   TikTok: "Tue 7:15 PM",
   Reels: "Wed 6:30 PM",
@@ -1080,6 +1106,7 @@ const MOCK_CAMPAIGNS = [
 ];
 
 export default function OutputStudio({ onBack }: OutputStudioProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"clips" | "social" | "blog">("clips");
   const [blogTemplate, setBlogTemplate] = useState<string>("SEO Optimized");
   const [activeCaptions, setActiveCaptions] = useState<Record<string, string>>({
@@ -1099,6 +1126,24 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const [subtitleStyle, setSubtitleStyle] = useState<string>("Yellow Box");
   const [showWhyTooltip, setShowWhyTooltip] = useState<string | null>(null);
+
+  // ── Subtitle editor state ─────────────────────────────────────────────────
+  // Key: "<clusterId>-<variationPlatform>" or "<clusterId>-master"
+  // Tracks which clip is open in the subtitle editor panel
+  const [subtitleEditorKey, setSubtitleEditorKey] = useState<string | null>(null);
+  // Per-clip edited words (starts from mock/real output_data.words, user edits live)
+  const [clipWords, setClipWords] = useState<Record<string, WordEntry[]>>({});
+  // Per-clip subtitle render style
+  const [clipSubtitleStyle, setClipSubtitleStyle] = useState<Record<string, SubtitleStyle>>({});
+  // Video refs map — one ref per clip card (keyed by clip key)
+  const videoRefs = useRef<Record<string, React.RefObject<HTMLVideoElement | null>>>({});
+
+  const getOrCreateVideoRef = (key: string) => {
+    if (!videoRefs.current[key]) {
+      videoRefs.current[key] = React.createRef<HTMLVideoElement>();
+    }
+    return videoRefs.current[key];
+  };
 
   // Social tab new states
   const [activeSocialFilter, setActiveSocialFilter] = useState<"twitter" | "instagram" | "pinterest" | "linkedin" | "facebook">("twitter");
@@ -1434,6 +1479,18 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
 
                         {/* RIGHT Actions */}
                         <div className="ml-auto flex items-center gap-2 shrink-0">
+                          {/* Edit in Clip Studio */}
+                          <button
+                            onClick={() => router.push(`/dashboard/clip/${cluster.id}`)}
+                            className="h-7 px-2.5 rounded-lg border border-[#fd633340] bg-[#fd63330a] text-[#fd6333] text-[11px] font-semibold flex items-center gap-1 hover:bg-[#fd633318] hover:border-[#fd633360] transition-colors shrink-0"
+                            title="Edit in Clip Studio"
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                            </svg>
+                            Edit
+                          </button>
                           <button className="w-8 h-8 rounded-lg border border-gray-200 text-[#9ca3af] hover:text-[#fd6333] hover:border-[#fd633330] flex items-center justify-center transition-colors" title="Schedule All">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                           </button>
@@ -1685,19 +1742,94 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                         )}
                       </AnimatePresence>
 
-                      {/* E. Subtitle Style Toggle */}
-                      <div className="border-t border-gray-50 px-5 py-2.5 flex items-center gap-3">
-                        <span className="text-[11px] text-[#9ca3af] font-medium">Subtitle Style:</span>
-                        {["Yellow Box", "White Outline", "Bold Minimal"].map(style => (
-                          <button 
-                            key={style}
-                            onClick={() => setSubtitleStyle(style)}
-                            className={`px-2.5 py-1 text-[11px] rounded-full border font-semibold transition-colors ${subtitleStyle === style ? 'bg-[#16423c] text-white border-[#16423c]' : 'border-gray-200 text-[#6b7280] hover:bg-gray-50'}`}
-                          >
-                            {style}
-                          </button>
-                        ))}
-                      </div>
+                      {/* E. Subtitle Studio */}
+                      {(() => {
+                        const masterKey = `${cluster.id}-master`;
+                        const videoRef = getOrCreateVideoRef(masterKey);
+                        const currentStyle: SubtitleStyle = clipSubtitleStyle[masterKey] ?? "fast_talker";
+                        const currentWords: WordEntry[] = clipWords[masterKey] ?? MOCK_WORDS;
+                        const isOpen = subtitleEditorKey === masterKey;
+
+                        return (
+                          <div className="border-t border-gray-50">
+                            {/* Toggle row */}
+                            <div
+                              className="px-5 py-2.5 flex items-center gap-3 cursor-pointer hover:bg-gray-50/60 transition-colors"
+                              onClick={() => setSubtitleEditorKey(isOpen ? null : masterKey)}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>
+                              </svg>
+                              <span className="text-[11px] text-[#9ca3af] font-medium flex-1">Subtitle Studio</span>
+                              {/* Style pills */}
+                              <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                                {(["fast_talker", "minimalist", "cinematic"] as SubtitleStyle[]).map(s => (
+                                  <button
+                                    key={s}
+                                    onClick={() => setClipSubtitleStyle(prev => ({ ...prev, [masterKey]: s }))}
+                                    className={`px-2 py-0.5 text-[10px] rounded-full border font-semibold transition-colors ${currentStyle === s ? "bg-[#16423c] text-white border-[#16423c]" : "border-gray-200 text-[#6b7280] hover:bg-gray-50"}`}
+                                  >
+                                    {s === "fast_talker" ? "Yellow Box" : s === "minimalist" ? "White Outline" : "Cinematic"}
+                                  </button>
+                                ))}
+                              </div>
+                              <svg
+                                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                                className={`transition-transform duration-200 ml-1 ${isOpen ? "rotate-180" : ""}`}
+                              >
+                                <polyline points="6 9 12 15 18 9"/>
+                              </svg>
+                            </div>
+
+                            {/* Expanded panel */}
+                            <AnimatePresence>
+                              {isOpen && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: "auto", opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: 0.22 }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="px-5 pb-5 flex gap-4">
+                                    {/* Video preview with canvas overlay */}
+                                    <div className="shrink-0 flex flex-col gap-2">
+                                      <div className="relative rounded-xl overflow-hidden bg-black" style={{ width: 200, height: 356 }}>
+                                        {/* Video element — src will come from output_refs in real usage */}
+                                        <video
+                                          ref={videoRef}
+                                          controls
+                                          playsInline
+                                          className="w-full h-full object-contain"
+                                          style={{ display: "block" }}
+                                        />
+                                        {/* Canvas subtitle overlay */}
+                                        <SubtitleOverlay
+                                          videoRef={videoRef}
+                                          words={currentWords}
+                                          style={currentStyle}
+                                        />
+                                      </div>
+                                      <span className="text-[10px] text-[#9ca3af] text-center">Live preview</span>
+                                    </div>
+
+                                    {/* Transcript editor */}
+                                    <div className="flex-1 min-w-0 rounded-xl border border-gray-100 bg-gray-50/40 overflow-hidden" style={{ maxHeight: 380 }}>
+                                      <TranscriptEditor
+                                        videoRef={videoRef}
+                                        words={currentWords}
+                                        onWordsChange={(updated) =>
+                                          setClipWords(prev => ({ ...prev, [masterKey]: updated }))
+                                        }
+                                      />
+                                    </div>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                        );
+                      })()}
 
                     </div>
                   );
