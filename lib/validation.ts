@@ -142,6 +142,8 @@ export interface GenerateJobItem {
   quantity: number;
   platforms?: string[];
   style?: string;
+  /** All style variants to render in parallel (populated when variationsEnabled). */
+  styles?: string[];
 }
 
 export interface ValidatedGenerateRequest {
@@ -214,6 +216,19 @@ export function validateGenerateRequest(
       }
     }
 
+    // Validate styles[] (optional variations array, only for viral_clip)
+    let styles: string[] | undefined;
+    if (jobType === "viral_clip" && Array.isArray(rawItem.styles) && rawItem.styles.length > 0) {
+      styles = [];
+      for (const s of rawItem.styles) {
+        const sv = sanitizeString(s);
+        if (!VALID_STYLES.includes(sv as typeof VALID_STYLES[number])) {
+          return { ok: false, message: `Invalid style in styles[]: ${sv}` };
+        }
+        styles.push(sv);
+      }
+    }
+
     // For viral_clip, credit cost scales by platforms × quantity (one job item per platform per clip)
     const creditCost = jobType === "viral_clip"
       ? (CREDIT_COSTS[jobType] ?? 0) * quantity * (platforms?.length ?? 1)
@@ -225,6 +240,7 @@ export function validateGenerateRequest(
       quantity,
       ...(platforms && { platforms }),
       ...(style && { style }),
+      ...(styles && { styles }),
     });
   }
 

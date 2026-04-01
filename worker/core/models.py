@@ -159,3 +159,7 @@ class FilterResult:
     """Output of a template filter graph builder."""
     filter_chain: str                         # Complete -vf string for ffmpeg
     subtitle_y_override: Optional[int] = None # Override subtitle Y position (pixels)
+    # Phase 3.4: absolute paths to B-Roll input files that must be passed
+    # as additional -i arguments to ffmpeg (in the order they appear in
+    # filter_complex).  Empty list when no B-Roll is used.
+    broll_input_paths: list[str] = field(default_factory=list)

@@ -161,16 +161,27 @@ async function handleGenerate(request: NextRequest) {
     const creditPerUnit = CREDIT_COSTS[item.job_type] ?? 0;
 
     if (item.job_type === "viral_clip" && item.platforms) {
-      // For clips: create one job item per clip per platform
+      // When variations are requested (item.styles has 3 entries), expand to
+      // platform → style → clipIndex so the ordering matches GeneratePanel's
+      // expandedMeta loop exactly.  Only the first style variant for each
+      // (platform, clipIndex) pair carries the credit cost; extras are free
+      // (totalCredits was computed by validation without counting styles).
+      const styleList = Array.isArray(item.styles) && item.styles.length > 0
+        ? item.styles
+        : [item.style ?? "minimalist"];
+
       for (const platform of item.platforms) {
-        for (let i = 0; i < item.quantity; i++) {
-          jobItemsPayload.push({
-            job_type: item.job_type,
-            credits_cost: creditPerUnit,
-            platform,
-            style: item.style ?? "minimalist",
-            input_data: { video_id: videoId, clip_index: i },
-          });
+        for (let styleIdx = 0; styleIdx < styleList.length; styleIdx++) {
+          const style = styleList[styleIdx];
+          for (let i = 0; i < item.quantity; i++) {
+            jobItemsPayload.push({
+              job_type: item.job_type,
+              credits_cost: styleIdx === 0 ? creditPerUnit : 0,
+              platform,
+              style,
+              input_data: { video_id: videoId, clip_index: i },
+            });
+          }
         }
       }
     } else {

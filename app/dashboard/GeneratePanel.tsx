@@ -489,6 +489,7 @@ export default function GeneratePanel() {
   const [videoClipPlatforms, setVideoClipPlatforms] = useState<Record<string, boolean>>({});
   const [videoStyle, setVideoStyle] = useState<string>("minimalist");
   const [videoQty, setVideoQty] = useState(1);
+  const [variationsEnabled, setVariationsEnabled] = useState(false);
 
   // Card 2: Social Media Posts
   const [socialTextSelected, setSocialTextSelected] = useState(false);
@@ -613,6 +614,9 @@ export default function GeneratePanel() {
     const items: Array<Record<string, unknown>> = [];
 
     if (videoClipSelected) {
+      const styles = variationsEnabled
+        ? STYLE_PRESETS.map((p) => p.key)
+        : [videoStyle];
       items.push({
         job_type: "viral_clip",
         quantity: videoQty,
@@ -620,6 +624,7 @@ export default function GeneratePanel() {
           .filter(([, v]) => v)
           .map(([k]) => k),
         style: videoStyle,
+        styles,
       });
     }
     if (socialTextSelected) {
@@ -660,13 +665,16 @@ export default function GeneratePanel() {
         return;
       }
 
-      const expandedMeta: Array<{ job_type: string; platform: string | null }> = [];
+      const expandedMeta: Array<{ job_type: string; platform: string | null; style?: string }> = [];
       for (const item of items) {
         const jobType = item.job_type as string;
         if ((jobType === "viral_clip" || jobType === "ai_image") && Array.isArray(item.platforms)) {
+          const styles = Array.isArray(item.styles) ? item.styles as string[] : [item.style as string];
           for (const platform of item.platforms as string[]) {
-            for (let i = 0; i < (item.quantity as number); i++) {
-              expandedMeta.push({ job_type: jobType, platform });
+            for (const style of styles) {
+              for (let i = 0; i < (item.quantity as number); i++) {
+                expandedMeta.push({ job_type: jobType, platform, style });
+              }
             }
           }
         } else {
@@ -708,6 +716,7 @@ export default function GeneratePanel() {
     videoClipPlatforms,
     videoQty,
     videoStyle,
+    variationsEnabled,
     socialTextSelected,
     visualPostSelected,
     visualPostQty,
@@ -721,6 +730,7 @@ export default function GeneratePanel() {
     setVideoClipPlatforms({});
     setVideoStyle("minimalist");
     setVideoQty(1);
+    setVariationsEnabled(false);
     setSocialTextSelected(false);
     setVisualPostSelected(false);
     setVisualPostQty(1);
@@ -983,15 +993,20 @@ export default function GeneratePanel() {
                           </p>
                           <div className="flex gap-1.5 flex-wrap">
                             {STYLE_PRESETS.map((preset) => {
-                              const isStyleSelected = videoStyle === preset.key;
+                              const isStyleSelected = variationsEnabled
+                                ? true
+                                : videoStyle === preset.key;
                               return (
                                 <button
                                   key={preset.key}
                                   type="button"
-                                  onClick={() => setVideoStyle(preset.key)}
+                                  onClick={() => {
+                                    if (!variationsEnabled) setVideoStyle(preset.key);
+                                  }}
+                                  disabled={variationsEnabled}
                                   className={`rounded-full px-3 py-1.5 text-[12px] font-medium transition-all ${
                                     isStyleSelected ? "border border-transparent" : "border border-[#e4e4e7] bg-white hover:bg-gray-50"
-                                  }`}
+                                  } ${variationsEnabled ? "opacity-60 cursor-not-allowed" : ""}`}
                                   style={{
                                     backgroundColor: isStyleSelected ? "#16423c" : undefined,
                                     color: isStyleSelected ? "#ffffff" : "#71717a",
@@ -1001,6 +1016,31 @@ export default function GeneratePanel() {
                                 </button>
                               );
                             })}
+                          </div>
+                        </div>
+                        <div className="border-t border-[#f0f0f0] w-full" />
+                        {/* Variations toggle */}
+                        <div
+                          className="flex items-center justify-between cursor-pointer"
+                          onClick={() => setVariationsEnabled((v) => !v)}
+                        >
+                          <div>
+                            <p className="text-[13px] font-semibold" style={{ color: "#16423c" }}>
+                              Variations
+                            </p>
+                            <p className="text-[11px] mt-0.5" style={{ color: "#a1a1aa" }}>
+                              Render all 3 styles in parallel — no extra time
+                            </p>
+                          </div>
+                          {/* Toggle pill */}
+                          <div
+                            className="relative w-10 h-6 rounded-full transition-colors duration-200 flex-shrink-0"
+                            style={{ backgroundColor: variationsEnabled ? "#fd6333" : "#e4e4e7" }}
+                          >
+                            <div
+                              className="absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200"
+                              style={{ transform: variationsEnabled ? "translateX(18px)" : "translateX(4px)" }}
+                            />
                           </div>
                         </div>
                         <div className="border-t border-[#f0f0f0] w-full" />

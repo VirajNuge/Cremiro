@@ -38,6 +38,12 @@ def build_filter_chain(
     target_w: int,
     target_h: int,
     subtitle_path: Optional[str] = None,
+    # Phase 3.2 — Punch-in zoom at sentence boundaries
+    punch_in_timestamps: Optional[list[float]] = None,
+    # Phase 3.3 — Active speaker switching (stereo L/R → face 0/1)
+    speaker_segments: Optional[list[tuple[float, float, int]]] = None,
+    # Phase 3.4 — B-Roll overlays
+    broll_segments: Optional[list[dict]] = None,
 ) -> FilterResult:
     """
     Dispatch to the appropriate template builder.
@@ -47,6 +53,15 @@ def build_filter_chain(
 
     Falls back to single_face if the requested template cannot be
     built (e.g. split_screen with <2 face tracks).
+
+    Phase 3 additions:
+      punch_in_timestamps — list of relative timestamps (seconds from clip
+          start) where new sentences begin; drives 1.15× zoom toggle.
+      speaker_segments    — list of (t_start, t_end, speaker_id) tuples
+          (relative to clip start) from stereo RMS analysis.
+          speaker_id = 0 or 1 (face track index); -1 = balanced/split.
+      broll_segments      — list of {keyword, start, end, url, local_path}
+          dicts; each is overlaid at 90% opacity for its time window.
     """
     builders = {
         "single_face": _build_single_face,
@@ -60,17 +75,57 @@ def build_filter_chain(
         logger.warning(f"Unknown template '{template}', falling back to single_face")
         builder = builders["single_face"]
 
-    return builder(
-        face_positions=face_positions,
-        face_tracks=face_tracks,
-        start_time=start_time,
-        end_time=end_time,
-        src_w=src_w,
-        src_h=src_h,
-        target_w=target_w,
-        target_h=target_h,
-        subtitle_path=subtitle_path,
+    # Phase 3.3: active-speaker template only applies when split_screen has
+    # speaker segments with clear dominance (not balanced segments only).
+    use_active_speaker = (
+        template == "split_screen"
+        and speaker_segments
+        and face_tracks
+        and len(face_tracks) >= 2
+        and any(s[2] in (0, 1) for s in speaker_segments)
     )
+
+    if use_active_speaker:
+        result = _build_active_speaker(
+            face_positions=face_positions,
+            face_tracks=face_tracks,
+            start_time=start_time,
+            end_time=end_time,
+            src_w=src_w,
+            src_h=src_h,
+            target_w=target_w,
+            target_h=target_h,
+            subtitle_path=subtitle_path,
+            speaker_segments=speaker_segments,
+        )
+    else:
+        result = builder(
+            face_positions=face_positions,
+            face_tracks=face_tracks,
+            start_time=start_time,
+            end_time=end_time,
+            src_w=src_w,
+            src_h=src_h,
+            target_w=target_w,
+            target_h=target_h,
+            subtitle_path=subtitle_path,
+        )
+
+    # Phase 3.2: inject punch-in crop for single-stream templates.
+    # split_screen / pip / active_speaker use filter_complex (";"), so
+    # punch-in is wired inside those builders instead.
+    clip_duration = end_time - start_time
+    if punch_in_timestamps and ";" not in result.filter_chain:
+        punch_crop = _build_punch_in_crop(punch_in_timestamps, clip_duration)
+        if punch_crop:
+            result = _inject_punch_in_simple(result, punch_crop)
+
+    # Phase 3.4: append B-Roll overlays when segments are available and
+    # local_path has been pre-downloaded by the orchestrator.
+    if broll_segments:
+        result = _apply_broll_overlays(result, broll_segments, clip_duration)
+
+    return result
 
 
 # ── Template builders ───────────────────────────────────────────────
@@ -382,6 +437,298 @@ def _build_full_frame(
     return FilterResult(
         filter_chain=",".join(filters),
         subtitle_y_override=None,
+    )
+
+
+# ── Phase 3.3 — Active Speaker Switching ───────────────────────────
+
+def _build_active_speaker(
+    face_positions: list[FacePosition],
+    face_tracks: list[FaceTrack],
+    start_time: float,
+    end_time: float,
+    src_w: int,
+    src_h: int,
+    target_w: int,
+    target_h: int,
+    subtitle_path: Optional[str],
+    speaker_segments: list[tuple[float, float, int]],
+) -> FilterResult:
+    """
+    Active-speaker layout: dynamically shows the dominant speaker full-frame
+    and falls back to split-screen during balanced segments.
+
+    Approach:
+    - Split source into two streams (face 0 and face 1).
+    - Each stream is cropped to follow its respective face track at full
+      target resolution.
+    - A third stream carries the static split-screen fallback.
+    - overlay=enable='between(t,...)' selects which stream is visible per
+      time window based on speaker_segments.
+
+    Segment types:
+      speaker_id = 0  → show face-0 full-frame (top overlay)
+      speaker_id = 1  → show face-1 full-frame (mid overlay)
+      speaker_id = -1 → show split-screen (base layer)
+
+    Filter graph (simplified):
+      [0:v]split=3[s0][s1][ss]
+      [s0]<face0 crop+scale>[f0]
+      [s1]<face1 crop+scale>[f1]
+      [ss]<split_screen crops+vstack>[base]
+      [base][f0]overlay=enable='...'[m0]
+      [m0][f1]overlay=enable='...'[v]
+      [v]ass=...[v]  (optional subtitles)
+    """
+    target_ratio = target_w / target_h
+    src_ratio = src_w / src_h
+    if src_ratio > target_ratio:
+        full_crop_h = src_h
+        full_crop_w = int(src_h * target_ratio)
+    else:
+        full_crop_w = src_w
+        full_crop_h = int(src_w / target_ratio)
+
+    track0 = face_tracks[0]
+    track1 = face_tracks[1]
+
+    face0_crop = _build_face_track_crop(
+        track0, start_time, end_time,
+        src_w, src_h, full_crop_w, full_crop_h,
+    )
+    face1_crop = _build_face_track_crop(
+        track1, start_time, end_time,
+        src_w, src_h, full_crop_w, full_crop_h,
+    )
+
+    # Split-screen crops for the balanced fallback
+    half_h = target_h // 2
+    half_ratio = target_w / half_h
+    if src_ratio > half_ratio:
+        ss_crop_h = src_h
+        ss_crop_w = int(src_h * half_ratio)
+    else:
+        ss_crop_w = src_w
+        ss_crop_h = int(src_w / half_ratio)
+
+    ss_top_crop = _build_face_track_crop(
+        track0, start_time, end_time,
+        src_w, src_h, ss_crop_w, ss_crop_h,
+    )
+    ss_bot_crop = _build_face_track_crop(
+        track1, start_time, end_time,
+        src_w, src_h, ss_crop_w, ss_crop_h,
+    )
+
+    # Build enable expressions for each full-frame speaker overlay
+    def _enable_expr(speaker_id: int) -> str:
+        ranges = [
+            (s[0], s[1]) for s in speaker_segments if s[2] == speaker_id
+        ]
+        if not ranges:
+            return "0"
+        parts = [f"between(t,{t0:.3f},{t1:.3f})" for t0, t1 in ranges]
+        return "+".join(parts)  # OR via addition in ffmpeg boolean (>0 = true)
+
+    enable0 = _enable_expr(0)
+    enable1 = _enable_expr(1)
+
+    filter_parts = [
+        f"[0:v]split=4[s0][s1][ss_top_src][ss_bot_src]",
+        f"[s0]{face0_crop},scale={target_w}:{target_h}:flags=lanczos[f0]",
+        f"[s1]{face1_crop},scale={target_w}:{target_h}:flags=lanczos[f1]",
+        f"[ss_top_src]{ss_top_crop},scale={target_w}:{half_h}:flags=lanczos[ss_top]",
+        f"[ss_bot_src]{ss_bot_crop},scale={target_w}:{half_h}:flags=lanczos[ss_bot]",
+        f"[ss_top][ss_bot]vstack=inputs=2[base]",
+        f"[base][f0]overlay=x=0:y=0:enable='{enable0}'[m0]",
+        f"[m0][f1]overlay=x=0:y=0:enable='{enable1}'[v]",
+    ]
+
+    if subtitle_path and os.path.exists(subtitle_path):
+        escaped_path = subtitle_path.replace("\\", "/").replace(":", "\\:")
+        filter_parts[-1] = f"[m0][f1]overlay=x=0:y=0:enable='{enable1}'[pre_sub]"
+        filter_parts.append(f"[pre_sub]ass='{escaped_path}'[v]")
+
+    filter_chain = ";".join(filter_parts)
+
+    return FilterResult(
+        filter_chain=filter_chain,
+        subtitle_y_override=int(target_h * 0.96),
+    )
+
+
+# ── Phase 3.2 — Punch-In Crop ──────────────────────────────────────
+
+def _build_punch_in_crop(
+    sentence_starts: list[float],
+    clip_duration: float,
+    zoom: float = 1.15,
+) -> str:
+    """
+    Returns a crop filter string that toggles zoom at sentence boundaries.
+
+    Odd-indexed sentences (1, 3, 5...) get ``zoom``× magnification;
+    even-indexed sentences (0, 2, 4...) get 1.0× (normal).
+
+    Inserted between face-tracking crop and scale= in the filter chain.
+    Commas are escaped with \\, for FFmpeg filter chain compatibility.
+
+    Returns "" if fewer than 2 sentences (no effect needed).
+    """
+    if not sentence_starts or len(sentence_starts) < 2:
+        return ""
+
+    punch_ranges: list[tuple[float, float]] = []
+    for i, t_start in enumerate(sentence_starts):
+        if i % 2 == 0:
+            continue  # even index = normal
+        t_end = sentence_starts[i + 1] if i + 1 < len(sentence_starts) else clip_duration
+        punch_ranges.append((t_start, t_end))
+
+    if not punch_ranges:
+        return ""
+
+    # Build nested if-chain from innermost outward
+    zoom_expr = "1"
+    for t_start, t_end in reversed(punch_ranges):
+        zoom_expr = f"if(between(t\\,{t_start:.3f}\\,{t_end:.3f})\\,{zoom:.3f}\\,{zoom_expr})"
+
+    # crop=iw/ZOOM:ih/ZOOM:(iw-ow)/2:(ih-oh)/2
+    return f"crop=iw/{zoom_expr}:ih/{zoom_expr}:(iw-ow)/2:(ih-oh)/2"
+
+
+def _inject_punch_in_simple(result: FilterResult, punch_crop: str) -> FilterResult:
+    """
+    Insert punch_crop between the face-tracking crop and the scale= filter
+    in a simple comma-chain filter (no filter_complex / no ";").
+
+    Strategy: the first filter in the chain is the face crop (crop=W:H:x:y).
+    We split on "," but be careful — the crop x/y expressions may themselves
+    contain escaped commas (\\,).  We scan for the first top-level comma that
+    is NOT preceded by "\\" to find the split point.
+    """
+    chain = result.filter_chain
+    split_idx = _find_first_unescaped_comma(chain)
+    if split_idx == -1:
+        # Only one filter — append after it, before nothing
+        new_chain = f"{chain},{punch_crop}"
+    else:
+        face_crop_part = chain[:split_idx]
+        rest = chain[split_idx + 1:]
+        new_chain = f"{face_crop_part},{punch_crop},{rest}"
+
+    return FilterResult(
+        filter_chain=new_chain,
+        subtitle_y_override=result.subtitle_y_override,
+    )
+
+
+def _find_first_unescaped_comma(s: str) -> int:
+    """Return index of first ',' not preceded by '\\', or -1 if not found."""
+    for i, ch in enumerate(s):
+        if ch == "," and (i == 0 or s[i - 1] != "\\"):
+            return i
+    return -1
+
+
+# ── Phase 3.4 — B-Roll Overlays ────────────────────────────────────
+
+def _apply_broll_overlays(
+    result: FilterResult,
+    broll_segments: list[dict],
+    clip_duration: float,
+) -> FilterResult:
+    """
+    Append B-Roll overlay filters to an existing FilterResult.
+
+    Each broll_segment must have:
+      local_path  — absolute path to a pre-downloaded MP4 clip
+      start       — float, seconds relative to clip start
+      end         — float, seconds relative to clip start
+
+    Overlay is applied at 90% opacity using:
+      colorchannelmixer=aa=0.9 (yuva444p alpha manipulation)
+
+    For simple filter chains (no ";"), we convert to filter_complex first.
+    For existing filter_complex chains, we extend them.
+
+    The final output pad is always [v].
+    """
+    # Filter to only usable segments (local_path must exist)
+    usable = [
+        seg for seg in broll_segments
+        if seg.get("local_path") and os.path.exists(seg["local_path"])
+    ]
+    if not usable:
+        logger.debug("_apply_broll_overlays: no usable segments (missing local_path)")
+        return result
+
+    chain = result.filter_chain
+    uses_complex = ";" in chain
+
+    if not uses_complex:
+        # Convert simple chain to filter_complex form.
+        # [0:v] → existing filters → [v]
+        # Then append broll input streams + overlay chains.
+        filter_parts = [f"[0:v]{chain}[v_broll_base]"]
+        prev_pad = "v_broll_base"
+    else:
+        # Existing filter_complex already ends in [v].
+        # Replace the terminal [v] with [v_broll_base] so we can chain.
+        filter_parts = [chain.replace("[v]", "[v_broll_base]", 1)]
+        # Edge: subtitle filter rewrites [v] at the end — replace last occurrence
+        # using rfind to be safe.
+        last_v = filter_parts[0].rfind("[v]")
+        if last_v != -1:
+            filter_parts[0] = (
+                filter_parts[0][:last_v]
+                + "[v_broll_base]"
+                + filter_parts[0][last_v + 3:]
+            )
+        prev_pad = "v_broll_base"
+
+    extra_inputs: list[str] = []
+    input_idx = 1  # [0:v] is the source video; broll inputs start at 1
+
+    for i, seg in enumerate(usable):
+        local_path = seg["local_path"]
+        seg_start = float(seg.get("start", 0))
+        seg_end = float(seg.get("end", clip_duration))
+        seg_duration = seg_end - seg_start
+
+        broll_pad = f"broll_{i}"
+        out_pad = f"v_broll_{i}"
+
+        # Input stream pre-processing: trim to segment duration + alpha
+        filter_parts.append(
+            f"[{input_idx}:v]"
+            f"trim=start=0:duration={seg_duration:.3f},"
+            f"setpts=PTS-STARTPTS,"
+            f"format=yuva444p,"
+            f"colorchannelmixer=aa=0.9"
+            f"[{broll_pad}]"
+        )
+
+        # Overlay on top of previous output, enabled only during segment window
+        filter_parts.append(
+            f"[{prev_pad}][{broll_pad}]"
+            f"overlay=x=0:y=0:enable='between(t,{seg_start:.3f},{seg_end:.3f})'"
+            f"[{out_pad}]"
+        )
+
+        extra_inputs.append(local_path)
+        prev_pad = out_pad
+        input_idx += 1
+
+    # Rename final pad back to [v] for downstream compatibility
+    filter_parts[-1] = filter_parts[-1].replace(f"[{prev_pad}]", "[v]")
+
+    new_chain = ";".join(filter_parts)
+
+    return FilterResult(
+        filter_chain=new_chain,
+        subtitle_y_override=result.subtitle_y_override,
+        broll_input_paths=extra_inputs,
     )
 
 
