@@ -17,10 +17,23 @@ const LOADING_STAGES = [
   "Writing captions & blog",
 ];
 
-function LoadingScreen({ onComplete }: { onComplete: () => void }) {
+function LoadingScreen({ onComplete, jobItems }: { onComplete: () => void; jobItems?: JobItem[] }) {
   const [stageIdx, setStageIdx] = useState(0);
 
+  // ── Real job progress: watch jobItems for completion ──────────────────────
   useEffect(() => {
+    if (!jobItems || jobItems.length === 0) return;
+    const allDone = jobItems.every(j => j.status === "completed" || j.status === "failed");
+    if (allDone) {
+      // Small delay so the user sees 100% briefly before transitioning
+      const t = setTimeout(onComplete, 800);
+      return () => clearTimeout(t);
+    }
+  }, [jobItems, onComplete]);
+
+  // ── Fake timer: only runs when no real jobItems (preview mode) ─────────────
+  useEffect(() => {
+    if (jobItems && jobItems.length > 0) return; // Use real data instead
     const interval = setInterval(() => {
       setStageIdx((prev) => {
         if (prev < LOADING_STAGES.length - 1) return prev + 1;
@@ -30,9 +43,20 @@ function LoadingScreen({ onComplete }: { onComplete: () => void }) {
       });
     }, 1800);
     return () => clearInterval(interval);
-  }, [onComplete]);
+  }, [onComplete, jobItems]);
 
-  const progressPct = ((stageIdx + 1) / LOADING_STAGES.length) * 100;
+  // ── Stage index based on real job progress ─────────────────────────────────
+  const realStageIdx = useMemo(() => {
+    if (!jobItems || jobItems.length === 0) return stageIdx;
+    const completedCount = jobItems.filter(j => j.status === "completed" || j.status === "failed").length;
+    const total = jobItems.length;
+    const fraction = completedCount / total;
+    // Map 0-100% fraction to 0..LOADING_STAGES.length-1
+    return Math.min(LOADING_STAGES.length - 1, Math.floor(fraction * LOADING_STAGES.length));
+  }, [jobItems, stageIdx]);
+
+  const activeStageIdx = jobItems && jobItems.length > 0 ? realStageIdx : stageIdx;
+  const progressPct = ((activeStageIdx + 1) / LOADING_STAGES.length) * 100;
 
   return (
     <div className="w-full h-[100dvh] flex flex-col items-center justify-center font-sans text-[#f5f5f5]" style={{ backgroundColor: "#0F0F0F" }}>
@@ -41,20 +65,20 @@ function LoadingScreen({ onComplete }: { onComplete: () => void }) {
       <div className="h-8 relative w-full flex justify-center mb-2 overflow-hidden">
         <AnimatePresence mode="wait">
           <motion.div
-            key={stageIdx}
+            key={activeStageIdx}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.3 }}
             className="text-[18px] font-bold absolute"
           >
-            {LOADING_STAGES[stageIdx]}
+            {LOADING_STAGES[activeStageIdx]}
           </motion.div>
         </AnimatePresence>
       </div>
 
       <div className="text-[13px] font-medium mb-6" style={{ color: "rgba(255,255,255,0.4)" }}>
-        Stage {stageIdx + 1} of {LOADING_STAGES.length}
+        Stage {activeStageIdx + 1} of {LOADING_STAGES.length}
       </div>
 
       <div className="w-64 h-1 bg-white/10 rounded-full overflow-hidden mb-4">
@@ -512,7 +536,7 @@ export default function GeneratePanel() {
 
   const supabaseRef = useRef(createClient());
 
-  // ── Realtime subscription for job status updates ──
+   // ── Realtime subscription for job status updates ──
   useEffect(() => {
     if (!genState.requestId || genState.jobItems.length === 0) return;
 
@@ -552,6 +576,29 @@ export default function GeneratePanel() {
         }
       )
       .subscribe();
+
+    // ── Catch-up fetch: pick up any updates that arrived before the subscription was established ──
+    supabase
+      .from("job_items")
+      .select("id, status, output_data, output_refs, error_message")
+      .in("id", jobItemIds)
+      .then(({ data }) => {
+        if (!data || data.length === 0) return;
+        setGenState((prev) => ({
+          ...prev,
+          jobItems: prev.jobItems.map((item) => {
+            const fresh = data.find((d: Record<string, unknown>) => d.id === item.id);
+            if (!fresh) return item;
+            return {
+              ...item,
+              status: fresh.status as JobStatus,
+              output_data: (fresh.output_data as Record<string, unknown>) ?? null,
+              output_refs: (fresh.output_refs as string[]) ?? null,
+              error_message: (fresh.error_message as string) ?? null,
+            };
+          }),
+        }));
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -758,7 +805,12 @@ export default function GeneratePanel() {
     (blogPostSelected ? 5 * blogPostQty : 0);
 
   if (uiScreen === "loading") {
-    return <LoadingScreen onComplete={() => setUiScreen("output")} />;
+    return (
+      <LoadingScreen 
+        onComplete={() => setUiScreen("output")} 
+        jobItems={genState.jobItems}
+      />
+    );
   }
 
   if (uiScreen === "output") {
@@ -766,7 +818,25 @@ export default function GeneratePanel() {
       <OutputStudio 
         onBack={() => {
           resetGeneration();
-        }} 
+        }}
+        requestId={genState.requestId}
+        jobItems={genState.jobItems}
+        creditsAfter={genState.creditsAfter}
+        youtubeUrl={youtubeUrl}
+        selectedTypes={{
+          viral_clip: videoClipSelected,
+          social_text: socialTextSelected,
+          blog_post: blogPostSelected,
+          ai_image: visualPostSelected,
+        }}
+        onJobItemUpdate={(updatedItem) => {
+          setGenState(prev => ({
+            ...prev,
+            jobItems: prev.jobItems.map(item =>
+              item.id === updatedItem.id ? updatedItem : item
+            ),
+          }));
+        }}
       />
     );
   }

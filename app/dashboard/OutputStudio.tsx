@@ -5,9 +5,38 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, Reorder, useDragControls } from "framer-motion";
 import SubtitleOverlay, { type WordEntry, type SubtitleStyle } from "@/app/components/SubtitleOverlay";
 import TranscriptEditor from "@/app/components/TranscriptEditor";
+import { createClient } from "@/lib/supabase/client";
+
+// ─── Shared Job Types (mirrors GeneratePanel's types) ────────────────────────
+
+type JobStatus = "pending" | "processing" | "completed" | "failed";
+
+interface JobItem {
+  id: string;
+  job_type: string;
+  status: JobStatus;
+  platform: string | null;
+  output_data: Record<string, unknown> | null;
+  output_refs: string[] | null;
+  error_message: string | null;
+}
 
 interface OutputStudioProps {
   onBack: () => void;
+  // Real generation data - if null/undefined, show MOCK data (preview mode)
+  requestId?: string | null;
+  jobItems?: JobItem[];
+  creditsAfter?: number | null;
+  youtubeUrl?: string;
+  // What the user selected - determines which tabs to show
+  selectedTypes?: {
+    viral_clip: boolean;
+    social_text: boolean;
+    blog_post: boolean;
+    ai_image: boolean;
+  };
+  // Callback to update jobItems from realtime subscription
+  onJobItemUpdate?: (updatedItem: JobItem) => void;
 }
 
 // ─── Block Editor Types ───────────────────────────────────────────────────────
@@ -1105,9 +1134,25 @@ const MOCK_CAMPAIGNS = [
   },
 ];
 
-export default function OutputStudio({ onBack }: OutputStudioProps) {
+export default function OutputStudio({ onBack, requestId, jobItems, creditsAfter, youtubeUrl, selectedTypes, onJobItemUpdate }: OutputStudioProps) {
+  const isPreview = !requestId; // No real generation — show MOCK data
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"clips" | "social" | "blog">("clips");
+
+  // ─── Tab visibility based on selected content types ───────────────────────
+  const visibleTabs = useMemo(() => {
+    if (isPreview) return ["clips", "social", "blog"] as const;
+    const tabs: ("clips" | "social" | "blog")[] = [];
+    if (selectedTypes?.viral_clip) tabs.push("clips");
+    if (selectedTypes?.social_text || selectedTypes?.ai_image) tabs.push("social");
+    if (selectedTypes?.blog_post) tabs.push("blog");
+    return tabs.length > 0 ? tabs : (["clips", "social", "blog"] as const);
+  }, [isPreview, selectedTypes]);
+
+  const [activeTab, setActiveTab] = useState<"clips" | "social" | "blog">(() => {
+    // Start on first visible tab; this is computed before the component renders
+    // visibleTabs isn't computed yet, so just default to "clips"
+    return "clips";
+  });
   const [blogTemplate, setBlogTemplate] = useState<string>("SEO Optimized");
   const [activeCaptions, setActiveCaptions] = useState<Record<string, string>>({
     c1: "TikTok",
@@ -1160,6 +1205,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
   const [blogSchedulePlatform, setBlogSchedulePlatform] = useState<string>("WordPress");
 
   // Block editor states
+  // Initialize with MOCK data; when real blog job completes, we'll sync via useEffect
   const [versionBlocks, setVersionBlocks] = useState<Record<string, Block[]>>(() => {
     const result: Record<string, Block[]> = {};
     MOCK.blog.versions.forEach(v => {
@@ -1186,17 +1232,188 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
   const [snapshots, setSnapshots] = useState<Array<{ id: string; timestamp: number; label: string; blocks: Block[] }>>([]);
   const [anchorMenuId, setAnchorMenuId] = useState<string | null>(null);
 
+  // ── Handler state for interactive elements ────────────────────────────────
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [removedClusters, setRemovedClusters] = useState<Set<string>>(new Set());
+  const [editingCaptions, setEditingCaptions] = useState<Record<string, boolean>>({});
+  const [editedCaptionTexts, setEditedCaptionTexts] = useState<Record<string, Record<string, string>>>({});
+  const [exportingClips, setExportingClips] = useState<Set<string>>(new Set());
+
+  // ── Sync activeTab to first visible tab when visibleTabs changes ───────────
+  useEffect(() => {
+    if (!visibleTabs.includes(activeTab)) {
+      setActiveTab(visibleTabs[0]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleTabs]);
+
+  // ── Toast auto-dismiss ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!toastMessage) return;
+    const t = setTimeout(() => setToastMessage(null), 3000);
+    return () => clearTimeout(t);
+  }, [toastMessage]);
+
+  // ── Realtime subscription in OutputStudio for live job updates ────────────
+  const supabaseRef = useRef(createClient());
+
+  useEffect(() => {
+    if (!requestId || !jobItems?.length || !onJobItemUpdate) return;
+
+    const supabase = supabaseRef.current;
+    const channel = supabase
+      .channel(`output_studio_${requestId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "job_items",
+          filter: `request_id=eq.${requestId}`,
+        },
+        (payload) => {
+          const updated = payload.new as Record<string, unknown>;
+          onJobItemUpdate({
+            id: updated.id as string,
+            job_type: updated.job_type as string,
+            status: updated.status as JobStatus,
+            platform: (updated.platform as string) ?? null,
+            output_data: (updated.output_data as Record<string, unknown>) ?? null,
+            output_refs: (updated.output_refs as string[]) ?? null,
+            error_message: (updated.error_message as string) ?? null,
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [requestId, jobItems?.length, onJobItemUpdate]);
+
+  // ── Derive real data from jobItems ────────────────────────────────────────
+
+  const clipJobs = useMemo(() => {
+    if (isPreview || !jobItems) return null;
+    return jobItems.filter(j => j.job_type === "viral_clip");
+  }, [isPreview, jobItems]);
+
+  const socialJobs = useMemo(() => {
+    if (isPreview || !jobItems) return null;
+    return jobItems.filter(j => j.job_type === "social_text" || j.job_type === "ai_image");
+  }, [isPreview, jobItems]);
+
+  const blogJobs = useMemo(() => {
+    if (isPreview || !jobItems) return null;
+    return jobItems.filter(j => j.job_type === "blog_post");
+  }, [isPreview, jobItems]);
+
+  // Map viral_clip jobs to a cluster-like structure for the clips tab
+  const realClusters = useMemo(() => {
+    if (!clipJobs) return null;
+    return clipJobs.map((job, i) => ({
+      id: job.id,
+      title: (job.output_data?.title as string) || `Clip ${i + 1}`,
+      viralityScore: (job.output_data?.virality_score as number) || 0,
+      status: job.status,
+      platform: job.platform,
+      videoUrl: job.output_refs?.[0] || null,
+      words: (job.output_data?.words as WordEntry[]) || MOCK_WORDS,
+      captions: (job.output_data?.captions as Record<string, string>) || {},
+      errorMessage: job.error_message,
+    }));
+  }, [clipJobs]);
+
+  // Map social_text jobs to a campaign-like structure
+  const realCampaigns = useMemo(() => {
+    if (!socialJobs) return null;
+    return socialJobs.map((job, i) => {
+      const outputData = job.output_data ?? {};
+      const platforms = (outputData.platforms as Record<string, unknown>) ?? {};
+      const threadParts = (outputData.thread_parts as string[]) ?? [];
+
+      // Build twitter data from thread_parts if platforms.twitter not available
+      const twitterData = platforms.twitter ?? (threadParts.length > 0
+        ? { type: "thread", posts: threadParts }
+        : null);
+
+      return {
+        id: job.id,
+        title: (outputData.title as string) || `Campaign ${i + 1}`,
+        viralityScore: (outputData.virality_score as number) || 0,
+        status: job.status,
+        platforms: {
+          twitter: twitterData,
+          instagram: platforms.instagram ?? null,
+          linkedin: platforms.linkedin ?? null,
+          facebook: platforms.facebook ?? null,
+          pinterest: platforms.pinterest ?? null,
+        },
+      };
+    });
+  }, [socialJobs]);
+
   useEffect(() => {
     const t = setTimeout(() => setGaugeAnimated(true), 300);
     return () => clearTimeout(t);
   }, []);
+
+  // ── Sync real blog job data into versionBlocks when available ────────────
+  useEffect(() => {
+    if (!blogJobs || blogJobs.length === 0) return;
+    setVersionBlocks(prev => {
+      const updated = { ...prev };
+      blogJobs.forEach((job, i) => {
+        const versionId = `real_v${i + 1}`;
+        if (job.status === "completed" && job.output_data) {
+          const sections = job.output_data.sections as { title: string; content: string }[] | undefined;
+          if (sections?.length) {
+            updated[versionId] = sectionToBlocks(sections);
+          }
+        }
+      });
+      return updated;
+    });
+  }, [blogJobs]);
+
+  // ── Derive real blog metadata from completed blog jobs ────────────────────
+  const realBlogData = useMemo(() => {
+    if (!blogJobs || blogJobs.length === 0) return null;
+    const completedJob = blogJobs.find(j => j.status === "completed" && j.output_data);
+    if (!completedJob?.output_data) return null;
+    const d = completedJob.output_data;
+    return {
+      title: (d.title as string) || null,
+      metaDescription: (d.meta_description as string) || null,
+      keywords: (d.keywords as string[]) || null,
+      keywordDensity: (d.keyword_density as Record<string, number>) || null,
+      versions: blogJobs
+        .map((job, i) => ({
+          id: `real_v${i + 1}`,
+          label: (job.output_data?.title as string) || `Version ${i + 1}`,
+          status: job.status,
+        })),
+    };
+  }, [blogJobs]);
+
+  // ── Sync postMeta from real blog data when it becomes available ───────────
+  useEffect(() => {
+    if (!realBlogData) return;
+    setPostMeta(prev => ({
+      ...prev,
+      ogTitle: realBlogData.title ?? prev.ogTitle,
+      ogDescription: realBlogData.metaDescription ?? prev.ogDescription,
+    }));
+    // When real data arrives and activeBlogVersion is still a MOCK version, jump to real_v1
+    setActiveBlogVersion(prev => (prev === "v1" || prev === "v2") ? "real_v1" : prev);
+  }, [realBlogData]);
 
   const totalSelected = Object.values(selectedItems).filter(Boolean).length;
 
   // Blog analytics (computed from active blocks)
   const activeBlocks = useMemo(() => versionBlocks[activeBlogVersion] ?? [], [versionBlocks, activeBlogVersion]);
   const blogText = useMemo(() => activeBlocks.filter(b => ['paragraph','h1','h2','h3'].includes(b.type)).map(b => b.content).join(' '), [activeBlocks]);
-  const seoResult = useMemo(() => computeSEOScore(activeBlocks, MOCK.blog.keywords[0]), [activeBlocks]);
+  const seoResult = useMemo(() => computeSEOScore(activeBlocks, realBlogData?.keywords?.[0] ?? MOCK.blog.keywords[0]), [activeBlocks, realBlogData]);
   const geoResult = useMemo(() => computeGEOScore(activeBlocks), [activeBlocks]);
   const readingLevel = useMemo(() => computeReadingLevel(blogText), [blogText]);
   const lexicalDensity = useMemo(() => computeLexicalDensity(blogText), [blogText]);
@@ -1272,6 +1489,19 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
           backgroundSize: "28px 28px",
         }}
       />
+      {/* Toast notification */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-4 right-4 z-[100] bg-[#16423c] text-white text-[13px] font-medium px-4 py-2.5 rounded-xl shadow-lg"
+          >
+            {toastMessage}
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div className="relative z-10">
       {/* Sticky Header */}
       <div className="sticky top-0 z-20 bg-white border-b border-gray-100/80 shadow-[0_1px_6px_rgba(0,0,0,0.06)]">
@@ -1291,7 +1521,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
               <span>/</span>
               <span className="truncate max-w-[150px]">{MOCK.video.title}</span>
               <span>/</span>
-              <span className="text-[#16423c] font-semibold">{MOCK.request.id}</span>
+              <span className="text-[#16423c] font-semibold">{requestId ?? MOCK.request.id}</span>
             </div>
           </div>
 
@@ -1315,9 +1545,27 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
           {/* RIGHT: credit balance + export button */}
           <div className="flex items-center gap-4 shrink-0">
             <div className="bg-[#fd63330f] border border-[#fd633325] text-[#fd6333] text-[12px] font-bold px-3 py-1.5 rounded-full">
-              {MOCK.request.creditsBalance} Credits
+              {creditsAfter ?? MOCK.request.creditsBalance} Credits
             </div>
-            <button className="border border-[#e5e7eb] text-[#16423c] rounded-xl px-4 py-2 text-[13px] font-semibold hover:bg-gray-50 transition-colors">
+            <button
+              onClick={() => {
+                const data = {
+                  clips: realClusters ?? MOCK.clusters,
+                  scheduledTimes,
+                  selectedItems,
+                };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `project_export_${(requestId ?? 'preview').slice(0, 8)}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                setToastMessage('Project data exported');
+              }}
+              className="border border-[#e5e7eb] text-[#16423c] rounded-xl px-4 py-2 text-[13px] font-semibold hover:bg-gray-50 transition-colors">
               Export All
             </button>
           </div>
@@ -1328,23 +1576,26 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
       <div className="sticky top-[57px] z-10 bg-white border-b border-gray-100/80">
         <div className="max-w-[1200px] mx-auto px-6">
           <div className="flex gap-0">
-            {[
-              { id: "clips", label: "Clips & Variations", count: 2 },
-              { id: "social", label: "Social Campaigns", count: 4 },
-              { id: "blog", label: "Editorial Suite", count: 1 },
-            ].map((tab) => {
+            {([
+              { id: "clips", label: "Clips & Variations", mockCount: 2 },
+              { id: "social", label: "Social Campaigns", mockCount: 4 },
+              { id: "blog", label: "Editorial Suite", mockCount: 1 },
+            ] as const).filter(tab => visibleTabs.includes(tab.id)).map((tab) => {
               const isActive = activeTab === tab.id;
+              const realCount = tab.id === "clips" ? (clipJobs?.length ?? tab.mockCount)
+                : tab.id === "social" ? (socialJobs?.length ?? tab.mockCount)
+                : (blogJobs?.length ?? tab.mockCount);
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id as "clips" | "social" | "blog")}
+                  onClick={() => setActiveTab(tab.id)}
                   className={`px-6 py-3.5 text-[14px] font-semibold relative transition-colors ${
                     isActive ? "text-[#16423c]" : "text-[#9ca3af] hover:text-[#6b7280]"
                   }`}
                 >
                   {tab.label}
                   <span className="bg-[#fd63330f] text-[#fd6333] text-[10px] font-bold px-1.5 py-0.5 rounded ml-1.5">
-                    {tab.count}
+                    {realCount}
                   </span>
                   {isActive && (
                     <motion.div
@@ -1365,7 +1616,21 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
           <span className="text-[12px] text-[#6b7280] font-medium">{totalSelected} items selected</span>
           <span className="text-[12px] text-[#9ca3af] hidden sm:inline">· Tick clips, posts and blog to add to schedule</span>
         </div>
-        <button className={`bg-[#16423c] text-white text-[12px] font-bold px-4 py-1.5 rounded-xl transition-all ${totalSelected === 0 ? 'opacity-40 cursor-not-allowed' : 'ring-2 ring-[#fd6333]/30'}`}>
+        <button
+          onClick={() => {
+            if (totalSelected === 0) return;
+            const newTimes = { ...scheduledTimes };
+            Object.entries(selectedItems).forEach(([key, isSelected]) => {
+              if (!isSelected) return;
+              const parts = key.split('-');
+              const platform = parts[parts.length - 1];
+              const aiTime = AI_SUGGESTED_TIMES[platform as keyof typeof AI_SUGGESTED_TIMES] || AI_SUGGESTED_TIMES.master || '12:00 PM';
+              newTimes[key] = aiTime;
+            });
+            setScheduledTimes(newTimes);
+            setToastMessage(`Scheduled ${totalSelected} items with AI-suggested times`);
+          }}
+          className={`bg-[#16423c] text-white text-[12px] font-bold px-4 py-1.5 rounded-xl transition-all ${totalSelected === 0 ? 'opacity-40 cursor-not-allowed' : 'ring-2 ring-[#fd6333]/30'}`}>
           Smart Schedule
         </button>
       </div>
@@ -1382,10 +1647,678 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
           >
             {activeTab === "clips" && (
               <div className="max-w-[1200px] mx-auto px-6 py-6 flex flex-col gap-5">
-                {MOCK.clusters.map((cluster) => {
+                {/* Real clip cards (non-preview mode) */}
+                {realClusters && realClusters.filter(c => !removedClusters.has(c.id)).map((cluster) => {
                   const isOpen = openCaptions[cluster.id] || false;
                   const isClusterChecked = Object.keys(selectedItems).some(k => k.startsWith(cluster.id) && selectedItems[k]);
-                  const currentStage = ('currentStage' in cluster) ? (cluster as any).currentStage : undefined;
+                  const realVariations = [
+                    { platform: "TikTok" as const, status: "pending" as const },
+                    { platform: "Reels" as const, status: "pending" as const },
+                    { platform: "Shorts" as const, status: "pending" as const },
+                  ];
+
+                  return (
+                    <div key={cluster.id} className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] flex flex-col">
+                      {/* A. Identity Bar */}
+                      <div className="px-5 py-3 flex items-center gap-3 border-b border-gray-50">
+                        <div 
+                          onClick={() => {
+                            const next = { ...selectedItems };
+                            const newVal = !isClusterChecked;
+                            next[`${cluster.id}-master`] = newVal;
+                            realVariations.forEach(v => {
+                              next[`${cluster.id}-${v.platform}`] = newVal;
+                            });
+                            setSelectedItems(next);
+                          }}
+                          className={`w-4 h-4 rounded border-2 shrink-0 cursor-pointer flex items-center justify-center transition-colors ${
+                            isClusterChecked ? 'border-[#16423c] bg-[#16423c]' : 'border-gray-300'
+                          }`}
+                        >
+                          {isClusterChecked && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                        </div>
+
+                        {editingTitle === cluster.id ? (
+                          <input 
+                            autoFocus
+                            value={clusterTitles[cluster.id] || ''}
+                            onChange={e => setClusterTitles(prev => ({ ...prev, [cluster.id]: e.target.value }))}
+                            onBlur={() => setEditingTitle(null)}
+                            onKeyDown={e => e.key === 'Enter' && setEditingTitle(null)}
+                            className="text-[14px] font-bold text-[#16423c] bg-transparent border-b border-[#fd6333] outline-none w-[160px]"
+                          />
+                        ) : (
+                          <span 
+                            onClick={() => setEditingTitle(cluster.id)}
+                            className="text-[14px] font-bold text-[#16423c] cursor-text truncate max-w-[160px]"
+                          >
+                            {clusterTitles[cluster.id] || cluster.title}
+                          </span>
+                        )}
+
+                        <div className="relative flex items-center justify-center">
+                          <div className="relative w-[32px] h-[32px] shrink-0">
+                            <svg className="w-full h-full transform rotate-[135deg]" viewBox="0 0 100 100">
+                              <circle cx="50" cy="50" r="40" stroke="#f0f0f0" strokeWidth="12" fill="none" pathLength="100" strokeDasharray="75 100" strokeLinecap="round" />
+                              <motion.circle
+                                cx="50"
+                                cy="50"
+                                r="40"
+                                stroke="#fd6333"
+                                strokeWidth="12"
+                                fill="none"
+                                pathLength="100"
+                                strokeDasharray="75 100"
+                                strokeLinecap="round"
+                                initial={{ strokeDashoffset: 75 }}
+                                animate={{ strokeDashoffset: gaugeAnimated ? 75 - cluster.viralityScore * 0.75 : 75 }}
+                                transition={{ duration: 1, ease: "easeOut" }}
+                              />
+                            </svg>
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <span className="text-[11px] font-black text-[#16423c] leading-none mt-0.5">
+                                {cluster.viralityScore}
+                              </span>
+                            </div>
+                          </div>
+                          <button 
+                            className="absolute -right-2 -top-2 w-4 h-4 rounded-full bg-gray-100 text-[#9ca3af] text-[9px] font-bold flex items-center justify-center hover:bg-gray-200 z-10"
+                            onMouseEnter={() => setShowWhyTooltip(cluster.id)}
+                            onMouseLeave={() => setShowWhyTooltip(null)}
+                          >
+                            ?
+                          </button>
+                          {showWhyTooltip === cluster.id && (
+                            <div className="absolute top-full left-0 mt-2 bg-[#1f2937] text-white text-[11px] rounded-lg p-3 w-[220px] z-30 shadow-xl pointer-events-none text-left whitespace-pre-wrap">
+                              Score = (Hook Strength × 0.7) + (Trending Topic × 0.3){'\n\n'}Hook: 89 · Trending: 72
+                            </div>
+                          )}
+                        </div>
+
+                        <div className={`w-2 h-2 rounded-full shrink-0 ml-2 ${
+                          cluster.status === "completed" ? "bg-[#22c55e]" :
+                          cluster.status === "processing" ? "bg-[#3b82f6] animate-pulse" :
+                          cluster.status === "failed" ? "bg-red-400" :
+                          "bg-[#d1d5db]"
+                        }`} />
+
+                         {cluster.status === "processing" && (
+                          <span className="text-[11px] text-[#9ca3af] truncate">
+                            Rendering clip...
+                          </span>
+                        )}
+
+                        {/* RIGHT Actions */}
+                        <div className="ml-auto flex items-center gap-2 shrink-0">
+                          {/* Edit in Clip Studio */}
+                          <button
+                            onClick={() => router.push(`/dashboard/clip/${cluster.id}`)}
+                            className="h-7 px-2.5 rounded-lg border border-[#fd633340] bg-[#fd63330a] text-[#fd6333] text-[11px] font-semibold flex items-center gap-1 hover:bg-[#fd633318] hover:border-[#fd633360] transition-colors shrink-0"
+                            title="Edit in Clip Studio"
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                            </svg>
+                            Edit
+                          </button>
+                          <button className="w-8 h-8 rounded-lg border border-gray-200 text-[#9ca3af] hover:text-[#fd6333] hover:border-[#fd633330] flex items-center justify-center transition-colors" title="Schedule All" onClick={() => {
+                            setOpenSchedulePicker(`${cluster.id}-master`);
+                          }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                          </button>
+                          <button className="w-8 h-8 rounded-lg border border-gray-200 text-[#9ca3af] hover:text-[#fd6333] hover:border-[#fd633330] flex items-center justify-center transition-colors" title="Zip All 4" onClick={() => {
+                            if (cluster.videoUrl) {
+                              const a = document.createElement('a');
+                              a.href = cluster.videoUrl;
+                              a.download = `${(clusterTitles[cluster.id] || cluster.title).replace(/\s+/g, '_')}_standard.mp4`;
+                              a.target = '_blank';
+                              document.body.appendChild(a);
+                              a.click();
+                              document.body.removeChild(a);
+                              setToastMessage('Downloading clip...');
+                            } else {
+                              setToastMessage('No video available to download');
+                            }
+                          }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                          </button>
+                          <button className="w-8 h-8 rounded-lg border border-gray-200 text-[#9ca3af] hover:text-red-400 hover:border-red-200 flex items-center justify-center transition-colors" title="Delete" onClick={() => {
+                            setRemovedClusters(prev => new Set(prev).add(cluster.id));
+                            setToastMessage('Clip removed');
+                          }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* B. Processing banner */}
+                      {cluster.status === "processing" && (
+                        <div className="bg-[#eff6ff] border-b border-[#bfdbfe] px-5 py-2 text-[11px] text-[#3b82f6] font-medium flex items-center gap-2">
+                          <div className="w-1.5 h-1.5 rounded-full bg-[#3b82f6] animate-pulse" />
+                          Rendering clip...
+                        </div>
+                      )}
+
+                      {/* C. Media Row */}
+                      <div className="px-5 py-4 flex items-start gap-4 overflow-x-auto">
+                        {/* Master Slot */}
+                        <div className="flex flex-col gap-1 items-center shrink-0">
+                          <div className={`w-[180px] h-[101px] rounded-xl bg-[#f4f4f5] relative overflow-hidden group cursor-pointer ${selectedItems[`${cluster.id}-master`] ? 'ring-2 ring-[#16423c]/40' : ''}`}>
+                            <div 
+                              onClick={() => setSelectedItems(prev => ({ ...prev, [`${cluster.id}-master`]: !prev[`${cluster.id}-master`] }))}
+                              className={`absolute top-1.5 left-1.5 z-20 w-4 h-4 rounded border-2 cursor-pointer transition-all flex items-center justify-center ${selectedItems[`${cluster.id}-master`] ? 'border-[#16423c] bg-[#16423c]' : 'border-white/70 bg-black/20'}`}
+                            >
+                              {selectedItems[`${cluster.id}-master`] && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                            </div>
+
+                            {cluster.status === "failed" ? (
+                              <div className="absolute inset-0 bg-red-50 flex flex-col items-center justify-center gap-1 p-2 z-10">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                                <div className="text-[9px] text-red-400 font-semibold text-center leading-tight">Failed</div>
+                                <button className="mt-0.5 text-[9px] bg-white border border-red-200 text-red-400 rounded px-1.5 py-0.5 font-semibold hover:bg-red-50" onClick={async () => {
+                                  if (!requestId) return;
+                                  setToastMessage('Retrying clip generation...');
+                                  try {
+                                    const res = await fetch('/api/generate', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        youtube_url: youtubeUrl,
+                                        items: [{ job_type: 'viral_clip', platforms: [cluster.platform || 'YouTube'], quantity: 1, style: 'minimalist' }],
+                                      }),
+                                    });
+                                    if (res.ok) {
+                                      setToastMessage('Retry submitted! Clip will appear when ready.');
+                                    } else {
+                                      setToastMessage('Retry failed. Please try again.');
+                                    }
+                                  } catch {
+                                    setToastMessage('Retry failed. Please try again.');
+                                  }
+                                }}>Retry</button>
+                              </div>
+                            ) : cluster.status === "processing" || cluster.status === "pending" ? (
+                              <div className="absolute inset-0 animate-pulse bg-gray-200 flex flex-col items-center justify-center gap-2">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                              </div>
+                            ) : cluster.videoUrl ? (
+                              <>
+                                <video
+                                  controls
+                                  playsInline
+                                  src={cluster.videoUrl}
+                                  className="absolute inset-0 w-full h-full object-cover"
+                                />
+                                <div className="bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded absolute bottom-2 right-2 backdrop-blur-sm z-10">
+                                  —
+                                </div>
+                                <div className="bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded absolute bottom-2 left-2 backdrop-blur-sm z-10">
+                                  Standard Cut
+                                </div>
+                                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                   <button className="w-6 h-6 rounded bg-white/90 shadow-sm flex items-center justify-center text-[#16423c] hover:bg-white transition-colors" onClick={(e) => {
+                                     e.stopPropagation();
+                                     if (cluster.videoUrl) {
+                                       const a = document.createElement('a');
+                                       a.href = cluster.videoUrl;
+                                       a.download = `${(clusterTitles[cluster.id] || cluster.title).replace(/\s+/g, '_')}_standard.mp4`;
+                                       a.target = '_blank';
+                                       document.body.appendChild(a);
+                                       a.click();
+                                       document.body.removeChild(a);
+                                       setToastMessage('Downloading clip...');
+                                     }
+                                   }}>
+                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                   </button>
+                                   <button className="w-6 h-6 rounded bg-white/90 shadow-sm flex items-center justify-center text-[#16423c] hover:bg-white transition-colors" onClick={(e) => {
+                                     e.stopPropagation();
+                                     if (cluster.videoUrl) {
+                                       navigator.clipboard.writeText(cluster.videoUrl);
+                                       setToastMessage('Video URL copied to clipboard');
+                                     } else {
+                                       setToastMessage('No video URL to share');
+                                     }
+                                   }}>
+                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                                   </button>
+                                 </div>
+                                 <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+                                   <div className="absolute top-0 inset-x-0 h-[14px] bg-black/25 flex items-center px-1 space-x-1">
+                                       <div className="w-1 h-1 rounded-full bg-white/50" />
+                                       <div className="w-1 h-1 rounded-full bg-white/50" />
+                                   </div>
+                                   <div className="absolute bottom-0 inset-x-0 h-[16px] bg-black/25 flex items-end px-1 pb-1">
+                                       <div className="w-4 h-1 bg-white/50 rounded-sm" />
+                                   </div>
+                                   <div className="absolute bottom-[16px] inset-x-[10%] h-[8px] border border-dashed border-white/50 rounded-sm" />
+                                 </div>
+                               </>
+                             ) : (
+                               <>
+                                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
+                                   <div className="w-[28px] h-[28px] rounded-full bg-[#fd6333] flex items-center justify-center">
+                                     <svg viewBox="0 0 24 24" fill="#fff" className="w-3.5 h-3.5 ml-0.5"><path d="M8 5v14l11-7z" /></svg>
+                                   </div>
+                                 </div>
+                                 <div className="bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded absolute bottom-2 right-2 backdrop-blur-sm z-10">
+                                   —
+                                 </div>
+                                 <div className="bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded absolute bottom-2 left-2 backdrop-blur-sm z-10">
+                                   Standard Cut
+                                 </div>
+                                 <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                   <button className="w-6 h-6 rounded bg-white/90 shadow-sm flex items-center justify-center text-[#16423c] hover:bg-white transition-colors" onClick={(e) => {
+                                     e.stopPropagation();
+                                     setToastMessage('No video available to download');
+                                   }}>
+                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                   </button>
+                                   <button className="w-6 h-6 rounded bg-white/90 shadow-sm flex items-center justify-center text-[#16423c] hover:bg-white transition-colors" onClick={(e) => {
+                                     e.stopPropagation();
+                                     setToastMessage('No video URL to share');
+                                   }}>
+                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                                   </button>
+                                 </div>
+                                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+                                  <div className="absolute top-0 inset-x-0 h-[14px] bg-black/25 flex items-center px-1 space-x-1">
+                                      <div className="w-1 h-1 rounded-full bg-white/50" />
+                                      <div className="w-1 h-1 rounded-full bg-white/50" />
+                                  </div>
+                                  <div className="absolute bottom-0 inset-x-0 h-[16px] bg-black/25 flex items-end px-1 pb-1">
+                                      <div className="w-4 h-1 bg-white/50 rounded-sm" />
+                                  </div>
+                                  <div className="absolute bottom-[16px] inset-x-[10%] h-[8px] border border-dashed border-white/50 rounded-sm" />
+                                </div>
+                              </>
+                            )}
+
+                            {/* Hover tooltip */}
+                            <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-[#1f2937] text-white text-[10px] rounded-lg px-2 py-1.5 w-[130px] z-30 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-0.5 shadow-xl">
+                              <div>1920×1080</div>
+                              <div>{cluster.words.length} words</div>
+                              {cluster.status === "completed" && <div className="text-green-400">Face Tracked ✓</div>}
+                            </div>
+                          </div>
+
+                          {/* Schedule badge */}
+                          <div className="relative w-full">
+                            {scheduledTimes[`${cluster.id}-master`] ? (
+                              <button onClick={() => setOpenSchedulePicker(`${cluster.id}-master`)} className="bg-[#f0fdf4] text-[#16a34a] text-[10px] font-semibold px-1.5 py-0.5 rounded flex items-center gap-0.5 w-full justify-center">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                {scheduledTimes[`${cluster.id}-master`]}
+                              </button>
+                            ) : (
+                              <button onClick={() => setOpenSchedulePicker(`${cluster.id}-master`)} className="text-[10px] text-[#9ca3af] italic flex items-center gap-0.5 w-full justify-center hover:text-[#16423c]">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                AI: {AI_SUGGESTED_TIMES.master}
+                              </button>
+                            )}
+                            {renderSchedulePopover(`${cluster.id}-master`, "master")}
+                          </div>
+                        </div>
+
+                        {/* Variation trio */}
+                        <div className="flex gap-2">
+                          {realVariations.map((v, i) => {
+                            const itemKey = `${cluster.id}-${v.platform}`;
+                            return (
+                              <div key={i} className="flex flex-col gap-1 items-center shrink-0">
+                                <div className={`w-[70px] h-[124px] rounded-xl bg-[#f4f4f5] relative overflow-hidden group cursor-pointer ${selectedItems[itemKey] ? 'ring-2 ring-[#16423c]/40' : ''}`}>
+                                  <div 
+                                    onClick={() => setSelectedItems(prev => ({ ...prev, [itemKey]: !prev[itemKey] }))}
+                                    className={`absolute top-1.5 left-1.5 z-20 w-4 h-4 rounded border-2 cursor-pointer transition-all flex items-center justify-center ${selectedItems[itemKey] ? 'border-[#16423c] bg-[#16423c]' : 'border-white/70 bg-black/20'}`}
+                                  >
+                                    {selectedItems[itemKey] && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                                  </div>
+
+                                  {cluster.status === "processing" || cluster.status === "pending" ? (
+                                    <div className="absolute inset-0 animate-pulse bg-gray-200 flex flex-col items-center justify-center gap-2">
+                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <div className="absolute top-1.5 right-1.5 bg-black/40 text-white text-[8px] font-bold px-1 py-0.5 rounded backdrop-blur-sm z-10">
+                                        {v.platform === "TikTok" ? "TK" : v.platform === "Reels" ? "IG" : "YT"}
+                                      </div>
+                                      <div className="absolute top-1.5 left-1/2 -translate-x-1/2 bg-black/40 text-white text-[8px] rounded z-10 flex items-center gap-0.5 px-1 py-0.5 backdrop-blur-sm">
+                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                                        FT
+                                      </div>
+                                      <div className="absolute inset-0 bg-gray-100 flex flex-col items-center justify-center gap-2">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                      </div>
+                                    </>
+                                  )}
+
+                                  {/* Hover tooltip */}
+                                  <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-[#1f2937] text-white text-[10px] rounded-lg px-2 py-1.5 w-[120px] z-30 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-0.5 shadow-xl">
+                                    <div>1080×1920</div>
+                                    <div>{cluster.words.length} words</div>
+                                    {cluster.status === "completed" && <div className="text-green-400">Face Tracked ✓</div>}
+                                  </div>
+                                </div>
+
+                                {/* Schedule badge */}
+                                <div className="relative w-full">
+                                  {scheduledTimes[itemKey] ? (
+                                    <button onClick={() => setOpenSchedulePicker(itemKey)} className="bg-[#f0fdf4] text-[#16a34a] text-[10px] font-semibold px-1.5 py-0.5 rounded flex items-center gap-0.5 w-full justify-center">
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                      {scheduledTimes[itemKey]}
+                                    </button>
+                                  ) : (
+                                    <button onClick={() => setOpenSchedulePicker(itemKey)} className="text-[10px] text-[#9ca3af] italic flex items-center gap-0.5 w-full justify-center hover:text-[#16423c]">
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                      AI: {AI_SUGGESTED_TIMES[v.platform] || "8:00 PM"}
+                                    </button>
+                                  )}
+                                  {renderSchedulePopover(itemKey, v.platform)}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* D. Caption Drawer Toggle */}
+                      <div 
+                        className="border-t border-gray-50 px-5 py-2.5 flex items-center justify-between cursor-pointer hover:bg-gray-50/60 transition-colors"
+                        onClick={() => setOpenCaptions(prev => ({ ...prev, [cluster.id]: !prev[cluster.id] }))}
+                      >
+                        <div className="flex items-center gap-2">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="12" y2="18"/>
+                          </svg>
+                          <span className="text-[12px] text-[#6b7280] font-medium">
+                            {Object.keys(cluster.captions).length > 0
+                              ? `${Object.keys(cluster.captions).length} Platform-Tailored Captions Generated`
+                              : "Captions will be generated when clip completes"}
+                          </span>
+                        </div>
+                        <svg 
+                          width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                          className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+                        >
+                          <polyline points="6 9 12 15 18 9"/>
+                        </svg>
+                      </div>
+
+                      {/* Expanded Caption Drawer */}
+                      <AnimatePresence>
+                        {isOpen && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="px-5 pb-4">
+                              {Object.keys(cluster.captions).length > 0 ? (
+                                <>
+                                  <div className="flex gap-2 mb-3">
+                                    {Object.keys(cluster.captions).map((plat) => {
+                                      const firstPlatform = Object.keys(cluster.captions)[0] || "TikTok";
+                                      const isPlatformActive = activeCaptions[cluster.id] === plat || (!activeCaptions[cluster.id] && plat === firstPlatform);
+                                      return (
+                                        <button
+                                          key={plat}
+                                          onClick={() => setActiveCaptions((prev) => ({ ...prev, [cluster.id]: plat }))}
+                                          className={`px-3 py-1 rounded-full text-[12px] font-semibold transition-colors border ${
+                                            isPlatformActive
+                                              ? "bg-[#fd63330f] border-[#fd633325] text-[#fd6333]"
+                                              : "bg-white border-[#e5e7eb] text-[#6b7280] hover:bg-gray-50"
+                                          }`}
+                                        >
+                                          {plat}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="bg-gray-50/60 rounded-xl p-3.5 text-[13px] text-[#374151] leading-relaxed relative group">
+                                     {(() => {
+                                       const activePlat = activeCaptions[cluster.id] || Object.keys(cluster.captions)[0] || "TikTok";
+                                       const editKey = `${cluster.id}-${activePlat}`;
+                                       const isEditing = editingCaptions[editKey];
+                                       const editedText = editedCaptionTexts[cluster.id]?.[activePlat] ?? cluster.captions[activePlat] ?? "";
+                                       if (isEditing) {
+                                         return (
+                                           <textarea
+                                             autoFocus
+                                             value={editedText}
+                                             onChange={e => setEditedCaptionTexts(prev => ({
+                                               ...prev,
+                                               [cluster.id]: { ...prev[cluster.id], [activePlat]: e.target.value }
+                                             }))}
+                                             className="w-full bg-transparent outline-none resize-none text-[13px] text-[#374151] leading-relaxed min-h-[80px]"
+                                           />
+                                         );
+                                       }
+                                       return <span>{editedCaptionTexts[cluster.id]?.[activePlat] ?? cluster.captions[activePlat]}</span>;
+                                     })()}
+
+                                     {(() => {
+                                       const activePlat = activeCaptions[cluster.id] || Object.keys(cluster.captions)[0] || "TikTok";
+                                       const limit = activePlat === "Shorts" ? 500 : 2200;
+                                       const text = editedCaptionTexts[cluster.id]?.[activePlat] ?? cluster.captions[activePlat] ?? "";
+                                       const len = text.length;
+                                       return <div className="absolute bottom-2 right-10 text-[10px] text-[#9ca3af] bg-gray-50/60 px-1">{len} / {limit}</div>;
+                                     })()}
+
+                                     <button className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-white border border-gray-200 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-50 text-[#16423c]" title="Copy" onClick={() => {
+                                       const activePlat = activeCaptions[cluster.id] || Object.keys(cluster.captions)[0] || "TikTok";
+                                       const text = editedCaptionTexts[cluster.id]?.[activePlat] ?? cluster.captions[activePlat] ?? "";
+                                       navigator.clipboard.writeText(text);
+                                       setToastMessage('Caption copied to clipboard');
+                                     }}>
+                                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                     </button>
+                                      <button className="absolute top-2 right-2 p-1.5 rounded-lg bg-white border border-gray-200 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity text-[#9ca3af] hover:text-[#16423c]" title="Edit" onClick={() => {
+                                        const activePlat = activeCaptions[cluster.id] || Object.keys(cluster.captions)[0] || "TikTok";
+                                        const editKey = `${cluster.id}-${activePlat}`;
+                                        const isCurrentlyEditing = editingCaptions[editKey];
+                                        setEditingCaptions(prev => ({ ...prev, [editKey]: !prev[editKey] }));
+                                        if (!editedCaptionTexts[cluster.id]?.[activePlat]) {
+                                          setEditedCaptionTexts(prev => ({
+                                            ...prev,
+                                            [cluster.id]: { ...prev[cluster.id], [activePlat]: cluster.captions[activePlat] || "" }
+                                          }));
+                                        }
+                                        // When toggling OFF edit mode, save to DB (non-preview only)
+                                        if (isCurrentlyEditing && !isPreview) {
+                                          const newText = editedCaptionTexts[cluster.id]?.[activePlat] ?? cluster.captions[activePlat] ?? "";
+                                          const supabase = supabaseRef.current;
+                                          (async () => {
+                                            try {
+                                              const { data: current } = await supabase.from('job_items').select('output_data').eq('id', cluster.id).single();
+                                              const updatedData = {
+                                                ...(current?.output_data as Record<string, unknown> ?? {}),
+                                                captions: {
+                                                  ...((current?.output_data as Record<string, unknown>)?.captions as Record<string, string> ?? {}),
+                                                  [activePlat]: newText
+                                                }
+                                              };
+                                              const { error } = await supabase.from('job_items').update({ output_data: updatedData }).eq('id', cluster.id);
+                                              if (error) throw error;
+                                              setToastMessage('Caption saved');
+                                            } catch {
+                                              setToastMessage('Failed to save caption');
+                                            }
+                                          })();
+                                        }
+                                      }}>
+                                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                     </button>
+                                   </div>
+                                </>
+                              ) : (
+                                <div className="text-[12px] text-[#9ca3af] italic py-2">
+                                  Captions will be generated when clip completes.
+                                </div>
+                              )}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {/* E. Subtitle Studio */}
+                      {(() => {
+                        const masterKey = `${cluster.id}-master`;
+                        const videoRef = getOrCreateVideoRef(masterKey);
+                        const currentStyle: SubtitleStyle = clipSubtitleStyle[masterKey] ?? "fast_talker";
+                        const currentWords: WordEntry[] = clipWords[masterKey] ?? cluster.words;
+                        const isSubOpen = subtitleEditorKey === masterKey;
+
+                        return (
+                          <div className="border-t border-gray-50">
+                            {/* Toggle row */}
+                            <div
+                              className="px-5 py-2.5 flex items-center gap-3 cursor-pointer hover:bg-gray-50/60 transition-colors"
+                              onClick={() => setSubtitleEditorKey(isSubOpen ? null : masterKey)}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>
+                              </svg>
+                              <span className="text-[11px] text-[#9ca3af] font-medium flex-1">Subtitle Studio</span>
+                              {/* Style pills */}
+                              <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                                {(["fast_talker", "minimalist", "cinematic"] as SubtitleStyle[]).map(s => (
+                                  <button
+                                    key={s}
+                                    onClick={() => setClipSubtitleStyle(prev => ({ ...prev, [masterKey]: s }))}
+                                    className={`px-2 py-0.5 text-[10px] rounded-full border font-semibold transition-colors ${currentStyle === s ? "bg-[#16423c] text-white border-[#16423c]" : "border-gray-200 text-[#6b7280] hover:bg-gray-50"}`}
+                                  >
+                                    {s === "fast_talker" ? "Yellow Box" : s === "minimalist" ? "White Outline" : "Cinematic"}
+                                  </button>
+                                ))}
+                              </div>
+                              <svg
+                                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                                className={`transition-transform duration-200 ml-1 ${isSubOpen ? "rotate-180" : ""}`}
+                              >
+                                <polyline points="6 9 12 15 18 9"/>
+                              </svg>
+                            </div>
+
+                            {/* Expanded panel */}
+                            <AnimatePresence>
+                              {isSubOpen && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: "auto", opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: 0.22 }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="px-5 pb-5 flex gap-4">
+                                    {/* Video preview with subtitle overlay */}
+                                    <div className="shrink-0 flex flex-col gap-2">
+                                      <div className="relative rounded-xl overflow-hidden bg-black" style={{ width: 200, height: 356 }}>
+                                        <video
+                                          ref={videoRef}
+                                          src={cluster.videoUrl ?? undefined}
+                                          controls
+                                          playsInline
+                                          className="w-full h-full object-contain"
+                                          style={{ display: "block" }}
+                                        />
+                                        <SubtitleOverlay
+                                          videoRef={videoRef}
+                                          words={currentWords}
+                                          style={currentStyle}
+                                        />
+                                      </div>
+                                      <span className="text-[10px] text-[#9ca3af] text-center">Live preview</span>
+                                    </div>
+
+                                    {/* Transcript editor */}
+                                    <div className="flex-1 min-w-0 rounded-xl border border-gray-100 bg-gray-50/40 overflow-hidden" style={{ maxHeight: 380 }}>
+                                      <TranscriptEditor
+                                        videoRef={videoRef}
+                                        words={currentWords}
+                                        onWordsChange={(updated) =>
+                                          setClipWords(prev => ({ ...prev, [masterKey]: updated }))
+                                        }
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="px-5 pb-4 flex items-center justify-between">
+                                    <span className="text-[10px] text-[#9ca3af]">Edits update overlay live</span>
+                                    <button
+                                      className="text-[11px] font-semibold text-[#16423c] border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors"
+                                      onClick={() => {
+                                        const masterKey = `${cluster.id}-master`;
+                                        const wordsToExport = clipWords[masterKey] ?? cluster.words;
+                                        const styleToExport = clipSubtitleStyle[masterKey] ?? "fast_talker";
+                                        const data = JSON.stringify({ words: wordsToExport, style: styleToExport }, null, 2);
+                                        const blob = new Blob([data], { type: 'application/json' });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = `${(clusterTitles[cluster.id] || cluster.title).replace(/\s+/g, '_')}_subtitles.json`;
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        document.body.removeChild(a);
+                                        URL.revokeObjectURL(url);
+                                        setToastMessage('Subtitle JSON exported');
+                                      }}
+                                     >Export JSON</button>
+                                     <button
+                                       disabled={exportingClips.has(cluster.id) || cluster.status !== "completed" || !cluster.videoUrl}
+                                       className="text-[11px] font-semibold text-white bg-[#16423c] border border-[#16423c] rounded-lg px-3 py-1.5 hover:bg-[#0f2e29] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                                       onClick={async () => {
+                                         const mk = `${cluster.id}-master`;
+                                         const wordsToExport = clipWords[mk] ?? cluster.words;
+                                         const styleToExport = clipSubtitleStyle[mk] ?? "fast_talker";
+                                         setExportingClips(prev => new Set(prev).add(cluster.id));
+                                         try {
+                                           const res = await fetch('/api/export-clip', {
+                                             method: 'POST',
+                                             headers: { 'Content-Type': 'application/json' },
+                                             body: JSON.stringify({ job_item_id: cluster.id, words: wordsToExport, style_config: { style: styleToExport } }),
+                                           });
+                                           if (!res.ok) throw new Error('Export failed');
+                                           const json = await res.json() as { download_url: string };
+                                           const a = document.createElement('a');
+                                           a.href = json.download_url;
+                                           a.download = `${(clusterTitles[cluster.id] || cluster.title).replace(/\s+/g, '_')}_subtitled.mp4`;
+                                           document.body.appendChild(a);
+                                           a.click();
+                                           document.body.removeChild(a);
+                                           setToastMessage('Export started — downloading…');
+                                         } catch {
+                                           setToastMessage('Export failed. Please try again.');
+                                         } finally {
+                                           setExportingClips(prev => { const s = new Set(prev); s.delete(cluster.id); return s; });
+                                         }
+                                       }}
+                                     >
+                                       {exportingClips.has(cluster.id) ? (
+                                         <>
+                                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                                           Exporting...
+                                         </>
+                                       ) : 'Export with Subtitles'}
+                                     </button>
+                                   </div>
+                                 </motion.div>
+                               )}
+                             </AnimatePresence>
+                           </div>
+                         );
+                       })()}
+ 
+                     </div>
+                   );
+                 })}
+ 
+                 {/* MOCK clip cards (preview mode) */}
+                {isPreview && MOCK.clusters.filter(c => !removedClusters.has(c.id)).map((cluster) => {
+                  const isOpen = openCaptions[cluster.id] || false;
+                  const isClusterChecked = Object.keys(selectedItems).some(k => k.startsWith(cluster.id) && selectedItems[k]);
+                  const currentStage = ('currentStage' in cluster) ? (cluster as {currentStage?: string}).currentStage : undefined;
 
                   return (
                     <div key={cluster.id} className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] flex flex-col">
@@ -1491,13 +2424,19 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                             </svg>
                             Edit
                           </button>
-                          <button className="w-8 h-8 rounded-lg border border-gray-200 text-[#9ca3af] hover:text-[#fd6333] hover:border-[#fd633330] flex items-center justify-center transition-colors" title="Schedule All">
+                          <button
+                            onClick={() => setOpenSchedulePicker(`${cluster.id}-master`)}
+                            className="w-8 h-8 rounded-lg border border-gray-200 text-[#9ca3af] hover:text-[#fd6333] hover:border-[#fd633330] flex items-center justify-center transition-colors" title="Schedule All">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                           </button>
-                          <button className="w-8 h-8 rounded-lg border border-gray-200 text-[#9ca3af] hover:text-[#fd6333] hover:border-[#fd633330] flex items-center justify-center transition-colors" title="Zip All 4">
+                          <button
+                            onClick={() => setToastMessage('Download not available in preview mode')}
+                            className="w-8 h-8 rounded-lg border border-gray-200 text-[#9ca3af] hover:text-[#fd6333] hover:border-[#fd633330] flex items-center justify-center transition-colors" title="Zip All 4">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                           </button>
-                          <button className="w-8 h-8 rounded-lg border border-gray-200 text-[#9ca3af] hover:text-red-400 hover:border-red-200 flex items-center justify-center transition-colors" title="Delete">
+                          <button
+                            onClick={() => { setRemovedClusters(prev => new Set(prev).add(cluster.id)); setToastMessage('Clip removed'); }}
+                            className="w-8 h-8 rounded-lg border border-gray-200 text-[#9ca3af] hover:text-red-400 hover:border-red-200 flex items-center justify-center transition-colors" title="Delete">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
                           </button>
                         </div>
@@ -1540,14 +2479,18 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                                 <div className="bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded absolute bottom-2 left-2 backdrop-blur-sm z-10">
                                   {cluster.hero.label}
                                 </div>
-                                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                                  <button className="w-6 h-6 rounded bg-white/90 shadow-sm flex items-center justify-center text-[#16423c] hover:bg-white transition-colors">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                                  </button>
-                                  <button className="w-6 h-6 rounded bg-white/90 shadow-sm flex items-center justify-center text-[#16423c] hover:bg-white transition-colors">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-                                  </button>
-                                </div>
+                                 <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                                   <button
+                                     onClick={(e) => { e.stopPropagation(); setToastMessage('Download not available in preview mode'); }}
+                                     className="w-6 h-6 rounded bg-white/90 shadow-sm flex items-center justify-center text-[#16423c] hover:bg-white transition-colors">
+                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                   </button>
+                                   <button
+                                     onClick={(e) => { e.stopPropagation(); setToastMessage('Share not available in preview mode'); }}
+                                     className="w-6 h-6 rounded bg-white/90 shadow-sm flex items-center justify-center text-[#16423c] hover:bg-white transition-colors">
+                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                                   </button>
+                                 </div>
                                 <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
                                   <div className="absolute top-0 inset-x-0 h-[14px] bg-black/25 flex items-center px-1 space-x-1">
                                       <div className="w-1 h-1 rounded-full bg-white/50" />
@@ -1607,7 +2550,9 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                                     <div className="absolute inset-0 bg-red-50 flex flex-col items-center justify-center gap-1 p-1 z-10">
                                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-red-400" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                                       <div className="text-[8px] text-red-400 font-semibold text-center leading-tight">Credits Refunded</div>
-                                      <button className="mt-1 text-[9px] bg-white border border-red-200 text-red-400 rounded px-1.5 py-0.5 font-semibold hover:bg-red-50">Retry</button>
+                                       <button
+                                        onClick={() => setToastMessage('Retry not available in preview mode')}
+                                        className="mt-1 text-[9px] bg-white border border-red-200 text-red-400 rounded px-1.5 py-0.5 font-semibold hover:bg-red-50">Retry</button>
                                     </div>
                                   ) : cluster.status === "processing" || v.status === "processing" ? (
                                     <div className="absolute inset-0 animate-pulse bg-gray-200 flex flex-col items-center justify-center gap-2">
@@ -1721,21 +2666,55 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                                 })}
                               </div>
                               <div className="bg-gray-50/60 rounded-xl p-3.5 text-[13px] text-[#374151] leading-relaxed relative group">
-                                {cluster.captions[activeCaptions[cluster.id] || "TikTok"]}
+                                {(() => {
+                                  const plat = activeCaptions[cluster.id] || "TikTok";
+                                  const key = `${cluster.id}-${plat}`;
+                                  if (editingCaptions[key]) {
+                                    return (
+                                      <textarea
+                                        className="w-full bg-transparent border-none outline-none resize-none text-[13px] text-[#374151] leading-relaxed"
+                                        rows={4}
+                                        value={editedCaptionTexts[cluster.id]?.[plat] ?? cluster.captions[plat] ?? ''}
+                                        onChange={e => setEditedCaptionTexts(prev => ({ ...prev, [cluster.id]: { ...(prev[cluster.id] ?? {}), [plat]: e.target.value } }))}
+                                      />
+                                    );
+                                  }
+                                  return <span>{editedCaptionTexts[cluster.id]?.[plat] ?? cluster.captions[activeCaptions[cluster.id] || "TikTok"]}</span>;
+                                })()}
                                 
                                 {(() => {
                                   const plat = activeCaptions[cluster.id] || "TikTok";
                                   const limit = plat === "Shorts" ? 500 : 2200;
-                                  const len = (cluster.captions[plat] || "").length;
+                                  const len = (editedCaptionTexts[cluster.id]?.[plat] ?? cluster.captions[plat] ?? "").length;
                                   return <div className="absolute bottom-2 right-10 text-[10px] text-[#9ca3af] bg-gray-50/60 px-1">{len} / {limit}</div>;
                                 })()}
 
-                                <button className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-white border border-gray-200 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-50 text-[#16423c]" title="Copy">
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                                </button>
-                                <button className="absolute top-2 right-2 p-1.5 rounded-lg bg-white border border-gray-200 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity text-[#9ca3af] hover:text-[#16423c]" title="Edit">
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                                </button>
+                                 <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const plat = activeCaptions[cluster.id] || "TikTok";
+                                    const key = `${cluster.id}-${plat}`;
+                                    const text = editedCaptionTexts[cluster.id]?.[plat] ?? cluster.captions[plat] ?? '';
+                                    navigator.clipboard.writeText(text);
+                                    setToastMessage('Caption copied to clipboard');
+                                  }}
+                                  className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-white border border-gray-200 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-50 text-[#16423c]" title="Copy">
+                                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                 </button>
+                                 <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const plat = activeCaptions[cluster.id] || "TikTok";
+                                    const key = `${cluster.id}-${plat}`;
+                                    if (!editingCaptions[key]) {
+                                      const existing = editedCaptionTexts[cluster.id]?.[plat] ?? cluster.captions[plat] ?? '';
+                                      setEditedCaptionTexts(prev => ({ ...prev, [cluster.id]: { ...(prev[cluster.id] ?? {}), [plat]: existing } }));
+                                    }
+                                    setEditingCaptions(prev => ({ ...prev, [key]: !prev[key] }));
+                                  }}
+                                  className="absolute top-2 right-2 p-1.5 rounded-lg bg-white border border-gray-200 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity text-[#9ca3af] hover:text-[#16423c]" title="Edit">
+                                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                 </button>
                               </div>
                             </div>
                           </motion.div>
@@ -1821,23 +2800,46 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                                         onWordsChange={(updated) =>
                                           setClipWords(prev => ({ ...prev, [masterKey]: updated }))
                                         }
-                                      />
+                                       />
+                                     </div>
+                                   </div>
+                                   <div className="px-5 pb-4 flex items-center justify-between">
+                                     <span className="text-[10px] text-[#9ca3af]">Edits update overlay live</span>
+                                     <button
+                                       className="text-[11px] font-semibold text-[#16423c] border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors"
+                                       onClick={() => {
+                                         const data = JSON.stringify({ words: currentWords, style: currentStyle }, null, 2);
+                                         const blob = new Blob([data], { type: 'application/json' });
+                                         const url = URL.createObjectURL(blob);
+                                         const a = document.createElement('a');
+                                         a.href = url;
+                                         a.download = `${(clusterTitles[cluster.id] || cluster.title).replace(/\s+/g, '_')}_subtitles.json`;
+                                         document.body.appendChild(a);
+                                         a.click();
+                                         document.body.removeChild(a);
+                                         URL.revokeObjectURL(url);
+                                         setToastMessage('Subtitle JSON exported');
+                                       }}
+                                      >Export JSON</button>
+                                      <button
+                                        className="text-[11px] font-semibold text-white bg-[#16423c] border border-[#16423c] rounded-lg px-3 py-1.5 hover:bg-[#0f2e29] transition-colors flex items-center gap-1.5"
+                                        onClick={() => setToastMessage('Export not available in preview mode')}
+                                      >Export with Subtitles</button>
                                     </div>
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-                        );
-                      })()}
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          );
+                        })()}
+ 
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {activeTab === "social" && (
+             {activeTab === "social" && (
               <div className="max-w-[1200px] mx-auto px-6 py-6 w-full">
               <div className="flex min-h-[600px] bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                 {/* LEFT: Platform Icon Rail */}
@@ -1871,7 +2873,142 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                 {/* RIGHT: Content Area */}
                 <div className="flex-1 flex flex-col min-w-0 overflow-y-auto p-5 bg-[#fafafa]">
                   <div className="max-w-[900px] mx-auto w-full flex flex-col gap-5">
-                    {MOCK_CAMPAIGNS.map(campaign => {
+                    {/* Real social campaigns (non-preview mode) */}
+                    {realCampaigns && realCampaigns.map((campaign) => {
+                      const pData = campaign.platforms[activeSocialFilter as keyof typeof campaign.platforms];
+                      const itemKey = `${campaign.id}-${activeSocialFilter}`;
+                      const isChecked = selectedItems[itemKey] || false;
+                      const time = scheduledTimes[itemKey];
+
+                      return (
+                        <div key={campaign.id} className="bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] overflow-hidden flex flex-col">
+                          {/* Card Header */}
+                          <div className="px-6 py-4 border-b border-gray-50 flex items-center gap-4">
+                            <span className="text-[16px] font-bold text-[#16423c] truncate max-w-[250px]">
+                              {campaign.title}
+                            </span>
+                            {campaign.viralityScore > 0 && (
+                              <div className="relative w-[32px] h-[32px] shrink-0">
+                                <svg className="w-full h-full transform rotate-[135deg]" viewBox="0 0 100 100">
+                                  <circle cx="50" cy="50" r="40" stroke="#f0f0f0" strokeWidth="12" fill="none" pathLength="100" strokeDasharray="75 100" strokeLinecap="round" />
+                                  <motion.circle cx="50" cy="50" r="40" stroke="#fd6333" strokeWidth="12" fill="none" pathLength="100" strokeDasharray="75 100" strokeLinecap="round"
+                                    initial={{ strokeDashoffset: 75 }}
+                                    animate={{ strokeDashoffset: gaugeAnimated ? 75 - campaign.viralityScore * 0.75 : 75 }}
+                                    transition={{ duration: 1, ease: "easeOut" }}
+                                  />
+                                </svg>
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                  <span className="text-[10px] font-black text-[#16423c] leading-none">{campaign.viralityScore}</span>
+                                </div>
+                              </div>
+                            )}
+                             <div className={`w-2 h-2 rounded-full shrink-0 ${
+                               campaign.status === "completed" ? "bg-[#22c55e]" :
+                               campaign.status === "processing" ? "bg-[#3b82f6] animate-pulse" :
+                               "bg-[#d1d5db]"
+                             }`} />
+                             <div className="ml-auto">
+                               {activeSocialFilter === 'twitter' && pData && (
+                                 <button
+                                   onClick={() => {
+                                     const pd = pData as { posts?: string[] };
+                                     if (pd.posts) {
+                                       const threadText = pd.posts.join('\n\n---\n\n');
+                                       navigator.clipboard.writeText(threadText);
+                                       setToastMessage('Thread copied to clipboard');
+                                     }
+                                   }}
+                                   className="text-[12px] font-semibold text-[#fd6333] hover:text-white hover:bg-[#fd6333] border border-[#fd6333] px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
+                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                   Copy Thread
+                                 </button>
+                               )}
+                               {activeSocialFilter !== 'twitter' && pData && typeof (pData as Record<string, unknown>).content === 'string' && (
+                                 <button
+                                   onClick={() => {
+                                     const pd = pData as { content: string };
+                                     navigator.clipboard.writeText(pd.content);
+                                     setToastMessage('Content copied to clipboard');
+                                   }}
+                                   className="text-[12px] font-semibold text-[#fd6333] hover:text-white hover:bg-[#fd6333] border border-[#fd6333] px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
+                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                   Copy
+                                 </button>
+                               )}
+                             </div>
+                           </div>
+
+                          {/* Content */}
+                          <div className="px-6 py-5">
+                            {!pData ? (
+                              <div className="text-[13px] text-[#9ca3af] italic py-4 text-center">
+                                No content for this platform yet
+                              </div>
+                            ) : campaign.status === "processing" || campaign.status === "pending" ? (
+                              <div className="flex flex-col items-center justify-center gap-3 py-6 bg-gray-50 rounded-xl animate-pulse">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                                <div className="text-[12px] text-[#9ca3af]">Generating content...</div>
+                              </div>
+                            ) : (
+                              (() => {
+                                const pd = pData as Record<string, unknown>;
+                                if (Array.isArray(pd.posts)) {
+                                  return (
+                                    <div className="flex flex-col gap-0">
+                                      {(pd.posts as string[]).map((post, i) => (
+                                        <React.Fragment key={i}>
+                                           <div className="bg-white rounded-xl p-4 text-[14px] text-[#374151] leading-relaxed whitespace-pre-wrap border border-gray-100 shadow-[0_1px_4px_rgba(0,0,0,0.04)] relative group">
+                                             {post}
+                                             <div className="absolute bottom-2 right-2 text-[11px] text-[#9ca3af]">{post.length}/280</div>
+                                             <button
+                                               onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(post); setToastMessage('Post copied to clipboard'); }}
+                                               className="absolute top-2 right-2 p-1.5 rounded bg-white shadow-sm opacity-0 group-hover:opacity-100 hover:text-[#16423c] text-[#9ca3af] transition-all">
+                                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                             </button>
+                                           </div>
+                                          {i < (pd.posts as string[]).length - 1 && <div className="border-l-2 border-dashed border-gray-200 ml-2 h-4 w-1 my-0.5"/>}
+                                        </React.Fragment>
+                                      ))}
+                                    </div>
+                                  );
+                                }
+                                if (typeof pd.content === 'string') {
+                                  return (
+                                    <p className="text-[14px] text-[#374151] leading-relaxed whitespace-pre-wrap">{pd.content}</p>
+                                  );
+                                }
+                                return <pre className="text-[12px] text-[#9ca3af] whitespace-pre-wrap">{JSON.stringify(pd, null, 2)}</pre>;
+                              })()
+                            )}
+                          </div>
+
+                          {/* Footer: checkbox + schedule */}
+                          <div className="px-6 py-3 border-t border-gray-50 flex items-center justify-between">
+                            <label className="flex items-center gap-2 cursor-pointer select-none">
+                              <div
+                                onClick={() => setSelectedItems(prev => ({ ...prev, [itemKey]: !prev[itemKey] }))}
+                                className={`w-4 h-4 rounded border-2 shrink-0 cursor-pointer flex items-center justify-center transition-colors ${isChecked ? 'border-[#16423c] bg-[#16423c]' : 'border-gray-300'}`}
+                              >
+                                {isChecked && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                              </div>
+                              <span className="text-[12px] text-[#9ca3af]">Add to schedule</span>
+                            </label>
+                            <div className="relative">
+                              <button
+                                className="text-[13px] font-semibold text-[#16423c] bg-white border border-gray-200 px-4 py-1.5 rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
+                                onClick={(e) => { e.stopPropagation(); setOpenSchedulePicker(itemKey); }}
+                              >
+                                {time ? 'Change Time' : 'Set Time'}
+                              </button>
+                              {renderSchedulePopover(itemKey, activeSocialFilter, true, true)}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* MOCK social campaigns (preview mode) */}
+                    {!realCampaigns && MOCK_CAMPAIGNS.map(campaign => {
                       const pData = campaign.platforms[activeSocialFilter as keyof typeof campaign.platforms];
                       if (!pData) return null;
 
@@ -1950,7 +3087,16 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
 
                             <div className="ml-auto">
                               {activeSocialFilter === 'twitter' && (
-                                <button className="text-[12px] font-semibold text-[#fd6333] hover:text-white hover:bg-[#fd6333] border border-[#fd6333] px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
+                                <button
+                                  onClick={() => {
+                                    const pd = pData as { posts?: string[] };
+                                    if (pd.posts) {
+                                      const threadText = pd.posts.join('\n\n---\n\n');
+                                      navigator.clipboard.writeText(threadText);
+                                      setToastMessage('Thread copied to clipboard');
+                                    }
+                                  }}
+                                  className="text-[12px] font-semibold text-[#fd6333] hover:text-white hover:bg-[#fd6333] border border-[#fd6333] px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                                   Copy Thread
                                 </button>
@@ -1967,7 +3113,9 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                                     <div className="bg-white rounded-xl p-4 text-[14px] text-[#374151] leading-relaxed whitespace-pre-wrap border border-gray-100 shadow-[0_1px_4px_rgba(0,0,0,0.04)] relative group">
                                       {post}
                                       <div className="absolute bottom-2 right-2 text-[11px] text-[#9ca3af]">{post.length}/280</div>
-                                      <button className="absolute top-2 right-2 p-1.5 rounded bg-white shadow-sm opacity-0 group-hover:opacity-100 hover:text-[#16423c] text-[#9ca3af] transition-all">
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(post); setToastMessage('Post copied to clipboard'); }}
+                                        className="absolute top-2 right-2 p-1.5 rounded bg-white shadow-sm opacity-0 group-hover:opacity-100 hover:text-[#16423c] text-[#9ca3af] transition-all">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                                       </button>
                                     </div>
@@ -2157,32 +3305,45 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
 
                 {/* LEFT SIDEBAR */}
                 <div className="w-[192px] shrink-0 bg-white rounded-2xl border border-gray-100/80 shadow-[0_2px_12px_rgba(0,0,0,0.06)] p-4 flex flex-col gap-1 overflow-y-auto">
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-[#9ca3af] mb-2 px-1">TEMPLATE</div>
-                  {[
-                    { name: "SEO Optimized", vid: "v1" },
-                    { name: "Storytelling", vid: "v2" },
-                    { name: "Bullet Point Summary", vid: "v1" },
-                    { name: "Tech Deep Dive", vid: "v2" },
-                  ].map((tpl) => {
-                    const currentTplName = MOCK.blog.versions.find(v => v.id === activeBlogVersion)?.template;
-                    const isActive = currentTplName === tpl.name || (activeBlogVersion === tpl.vid && currentTplName !== "SEO Optimized" && currentTplName !== "Storytelling" && false); // Fallback: just use blogTemplate
-                    const isReallyActive = blogTemplate === tpl.name || (MOCK.blog.versions.find(v => v.id === activeBlogVersion)?.template === tpl.name);
-                    
-                    return (
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-[#9ca3af] mb-2 px-1">{realBlogData ? "VERSIONS" : "TEMPLATE"}</div>
+                  {realBlogData ? (
+                    // Real mode: show actual generated blog versions
+                    realBlogData.versions.map((ver) => (
                       <button
-                        key={tpl.name}
-                        onClick={() => {
-                          setActiveBlogVersion(tpl.vid);
-                          setBlogTemplate(tpl.name);
-                        }}
-                        className={isReallyActive 
-                          ? "bg-[#16423c] text-white font-semibold rounded-xl px-3 py-2 text-[13px] w-full text-left" 
+                        key={ver.id}
+                        onClick={() => setActiveBlogVersion(ver.id)}
+                        className={activeBlogVersion === ver.id
+                          ? "bg-[#16423c] text-white font-semibold rounded-xl px-3 py-2 text-[13px] w-full text-left"
                           : "text-[#374151] font-medium rounded-xl px-3 py-2 text-[13px] w-full text-left hover:bg-gray-50"}
                       >
-                        {tpl.name}
+                        {ver.label}
                       </button>
-                    );
-                  })}
+                    ))
+                  ) : (
+                    // Preview mode: show MOCK template list
+                    [
+                      { name: "SEO Optimized", vid: "v1" },
+                      { name: "Storytelling", vid: "v2" },
+                      { name: "Bullet Point Summary", vid: "v1" },
+                      { name: "Tech Deep Dive", vid: "v2" },
+                    ].map((tpl) => {
+                      const isReallyActive = blogTemplate === tpl.name || (MOCK.blog.versions.find(v => v.id === activeBlogVersion)?.template === tpl.name);
+                      return (
+                        <button
+                          key={tpl.name}
+                          onClick={() => {
+                            setActiveBlogVersion(tpl.vid);
+                            setBlogTemplate(tpl.name);
+                          }}
+                          className={isReallyActive 
+                            ? "bg-[#16423c] text-white font-semibold rounded-xl px-3 py-2 text-[13px] w-full text-left" 
+                            : "text-[#374151] font-medium rounded-xl px-3 py-2 text-[13px] w-full text-left hover:bg-gray-50"}
+                        >
+                          {tpl.name}
+                        </button>
+                      );
+                    })
+                  )}
                   
                   {/* Table of Contents */}
                   {tocItems.length > 0 && (
@@ -2207,7 +3368,15 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                   )}
 
                   <div className="mt-auto" />
-                  <button className="w-full rounded-xl bg-[#fd63330f] border border-[#fd633330] text-[#fd6333] text-[12px] font-semibold py-2.5 flex items-center justify-center gap-2 mt-auto shrink-0">
+                  <button
+                    onClick={() => {
+                      if (isPreview) {
+                        setToastMessage('Generate not available in preview mode');
+                        return;
+                      }
+                      setToastMessage('Blog regeneration requires 5 credits. Feature coming soon.');
+                    }}
+                    className="w-full rounded-xl bg-[#fd63330f] border border-[#fd633330] text-[#fd6333] text-[12px] font-semibold py-2.5 flex items-center justify-center gap-2 mt-auto shrink-0">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
                     </svg>
@@ -2230,7 +3399,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                     {editingTitle === "blog-title" ? (
                       <input 
                         autoFocus
-                        defaultValue={MOCK.blog.title}
+                        defaultValue={realBlogData?.title ?? MOCK.blog.title}
                         onBlur={() => setEditingTitle(null)}
                         onKeyDown={e => e.key === 'Enter' && setEditingTitle(null)}
                         className="text-[17px] font-bold text-[#16423c] bg-transparent border-b border-[#fd6333] outline-none flex-1"
@@ -2240,7 +3409,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                         onClick={() => setEditingTitle("blog-title")}
                         className="text-[17px] font-bold text-[#16423c] cursor-text flex-1 truncate"
                       >
-                        {MOCK.blog.title}
+                        {realBlogData?.title ?? MOCK.blog.title}
                       </span>
                     )}
 
@@ -2267,7 +3436,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                     </div>
 
                     <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-full border border-gray-100">
-                      {["v1", "v2"].map(v => (
+                      {(realBlogData ? realBlogData.versions.map(v => v.id) : ["v1", "v2"]).map(v => (
                         <button
                           key={v}
                           onClick={() => setActiveBlogVersion(v)}
@@ -2364,6 +3533,25 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                       </button>
                       {renderSchedulePopover("blog", "blog", true, true)}
                     </div>
+
+                    <button
+                      onClick={() => {
+                        const data = JSON.stringify({ blocks: activeBlocks, meta: postMeta }, null, 2);
+                        const blob = new Blob([data], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'blog_export.json';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        setToastMessage('Blog JSON exported');
+                      }}
+                      className="text-[12px] font-semibold text-[#16423c] border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      Export JSON
+                    </button>
                   </div>
                 </div>
 
@@ -2479,7 +3667,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                       KEYWORD DENSITY
                     </div>
                     <div>
-                      {Object.entries(MOCK.blog.keywordDensity).map(([kw, density]) => (
+                      {Object.entries(realBlogData?.keywordDensity ?? MOCK.blog.keywordDensity).map(([kw, density]) => (
                         <div key={kw} className="mb-3 last:mb-0">
                           <div className="flex items-center justify-between mb-1">
                             <span className="text-[12px] text-[#374151] font-medium">{kw}</span>
@@ -2502,10 +3690,10 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                       META DESCRIPTION
                     </div>
                     <p className="text-[12px] text-[#374151] leading-relaxed mb-2">
-                      {MOCK.blog.metaDescription}
+                      {realBlogData?.metaDescription ?? MOCK.blog.metaDescription}
                     </p>
                     <div className="text-[11px] text-[#9ca3af] font-medium">
-                      {MOCK.blog.metaDescription.length}/160 chars
+                      {(realBlogData?.metaDescription ?? MOCK.blog.metaDescription).length}/160 chars
                     </div>
                   </div>
 
@@ -2515,7 +3703,7 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                       TOP KEYWORDS
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {MOCK.blog.keywords.map((kw, i) => (
+                      {(realBlogData?.keywords ?? MOCK.blog.keywords).map((kw, i) => (
                         <span 
                           key={i} 
                           className="bg-[#fd63330f] text-[#fd6333] text-[11px] font-semibold px-2.5 py-1 rounded-full border border-[#fd633320]"
@@ -2708,8 +3896,8 @@ export default function OutputStudio({ onBack }: OutputStudioProps) {
                       >
                         Save Settings
                       </button>
-                    </div>
-                  </motion.div>
+                                   </div>
+                                 </motion.div>
                 </>
               )}
             </AnimatePresence>

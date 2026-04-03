@@ -1,0 +1,388 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - navigation [ref=e4]:
+        - generic [ref=e5]:
+          - link "Cremiro" [ref=e6] [cursor=pointer]:
+            - /url: /
+            - img [ref=e8]
+            - generic [ref=e13]: Cremiro
+          - button "Open menu" [ref=e15] [cursor=pointer]:
+            - img [ref=e16]
+    - generic [ref=e18]:
+      - generic [ref=e20]:
+        - img [ref=e21]
+        - generic [ref=e23]: ✨ Powered by Parallel GPU Fan-out
+      - heading "Create Once. Go Viral Everywhere." [level=1] [ref=e24]:
+        - generic [ref=e25]: Create Once.
+        - generic [ref=e26]: Go Viral Everywhere.
+      - paragraph [ref=e27]: Turn any YouTube URL into 10 viral clips, social threads, and blog posts in under 60 seconds. 10x faster with Parallel GPU Fan-out.
+      - generic [ref=e28]:
+        - generic [ref=e29]:
+          - img [ref=e30]
+          - textbox "https://www.youtube.com/watch?v=..." [ref=e33]
+          - button "Generate Content" [ref=e34] [cursor=pointer]:
+            - img [ref=e35]
+            - generic [ref=e37]: Generate Content
+        - paragraph [ref=e38]: Powered by Gemini AI · 3 free clips on sign-up · No credit card required
+    - generic [ref=e40]:
+      - generic [ref=e41]:
+        - heading "While they render one-by-one, we render all at once." [level=2] [ref=e42]
+        - paragraph [ref=e43]: Our Parallel GPU Fan-out technology distributes your video across hundreds of GPUs, rendering all clips simultaneously instead of sequentially.
+      - generic [ref=e44]:
+        - generic [ref=e45]:
+          - heading "Traditional Platforms" [level=3] [ref=e46]
+          - generic [ref=e47]:
+            - generic [ref=e50]: Clip 1
+            - generic [ref=e54]: Clip 2
+            - generic [ref=e58]: Clip 3
+            - generic [ref=e60]: ...and 7 more clips waiting...
+        - generic [ref=e61]:
+          - heading "Clip Parallel GPU" [level=3] [ref=e63]:
+            - img [ref=e64]
+            - text: Clip
+            - generic [ref=e66]: Parallel GPU
+          - generic [ref=e67]:
+            - generic [ref=e69]: Clip 1
+            - generic [ref=e72]: Clip 2
+            - generic [ref=e75]: Clip 3
+            - generic [ref=e78]: Clip 4
+            - generic [ref=e81]: Clip 5
+            - generic [ref=e84]: Clip 6
+            - generic [ref=e87]: Clip 7
+            - generic [ref=e90]: Clip 8
+            - generic [ref=e93]: Clip 9
+            - generic [ref=e96]: Clip 10
+      - generic [ref=e100]: 10 CLIPS IN 60 SECONDS
+    - generic [ref=e102]:
+      - generic [ref=e103]:
+        - heading "Everything you need. Nothing you don't." [level=2] [ref=e104]
+        - paragraph [ref=e105]: A meticulously crafted toolkit designed specifically for short-form video creation.
+      - generic [ref=e106]:
+        - generic [ref=e107]:
+          - img [ref=e109]
+          - heading "Word-by-Word Subtitle Editor" [level=3] [ref=e111]
+          - paragraph [ref=e112]: Edit every word, style, and timing. Full control over your captions with an intuitive timeline interface.
+          - generic [ref=e113]:
+            - generic [ref=e114]: This
+            - generic [ref=e115]: video
+            - generic [ref=e116]: is
+            - generic [ref=e117]: going
+            - generic [ref=e118]: viral
+        - generic [ref=e119]:
+          - img [ref=e121]
+          - heading "AI Face-Tracking & Reframing" [level=3] [ref=e123]
+          - paragraph [ref=e124]: Automatically crop landscape to portrait. The speaker is always kept perfectly centered in the frame.
+          - img [ref=e129]
+        - generic [ref=e133]:
+          - img [ref=e135]
+          - heading "Auto B-Roll & Smart Emojis" [level=3] [ref=e137]
+          - paragraph [ref=e138]: AI analyzes context to automatically inject relevant stock footage and animated reaction emojis.
+          - generic [ref=e139]:
+            - generic [ref=e140]:
+              - generic [ref=e142]: 🚀
+              - generic [ref=e143]: B-ROLL
+            - generic [ref=e144]: 🔥
+            - generic [ref=e145]: 💯
+    - generic [ref=e147]:
+      - generic [ref=e148]:
+        - heading "Your Content Command Center" [level=2] [ref=e149]
+        - paragraph [ref=e150]: Output Studio 2.0 — edit, preview, and export from one hyper-optimized workspace.
+      - generic [ref=e151]:
+        - generic [ref=e152]:
+          - generic [ref=e153]: Transcript
+          - generic [ref=e154]:
+            - generic [ref=e155]:
+              - generic [ref=e156]: 0:00
+              - paragraph [ref=e157]: Have you ever wondered
+            - generic [ref=e158]:
+              - generic [ref=e159]: 0:02
+              - paragraph [ref=e160]: why some videos go absolutely
+            - generic [ref=e161]:
+              - generic [ref=e162]: 0:04
+              - paragraph [ref=e163]: viral overnight?
+            - generic [ref=e164]:
+              - generic [ref=e165]: 0:06
+              - paragraph [ref=e166]: The secret is pacing.
+            - generic [ref=e167]:
+              - generic [ref=e168]: 0:08
+              - paragraph [ref=e169]: Let me show you exactly
+        - generic [ref=e172]:
+          - img [ref=e175]
+          - generic [ref=e177]:
+            - generic [ref=e178]: VIRAL
+            - generic [ref=e179]: OVERNIGHT?
+        - generic [ref=e180]:
+          - generic [ref=e181]: Style Presets
+          - generic [ref=e182]:
+            - generic [ref=e185] [cursor=pointer]: Hormozi
+            - generic [ref=e188] [cursor=pointer]: Ali Abdaal
+            - generic [ref=e191] [cursor=pointer]: Iman Gadzhi
+            - generic [ref=e194] [cursor=pointer]: Minimal
+          - generic [ref=e195]:
+            - button "Export 4K Clip" [ref=e196] [cursor=pointer]
+            - generic [ref=e197]:
+              - img [ref=e199]
+              - img [ref=e202]
+              - img [ref=e205]
+    - generic [ref=e208]:
+      - generic [ref=e209]:
+        - heading "Beyond Video — AI-Powered Content at Scale" [level=2] [ref=e210]
+        - paragraph [ref=e211]: Extract maximum ROI from every video. We turn one video into a multi-channel content engine.
+      - generic [ref=e212]:
+        - generic [ref=e213]:
+          - img [ref=e215]
+          - heading "Social Threads" [level=3] [ref=e217]
+          - paragraph [ref=e218]: Turn any video into viral Twitter/X threads with hooks, storytelling, and CTAs.
+        - generic [ref=e232]:
+          - img [ref=e234]
+          - heading "Editorial Blog Posts" [level=3] [ref=e236]
+          - paragraph [ref=e237]: Auto-generate SEO-optimized blog posts from your video transcript in seconds.
+        - generic [ref=e245]:
+          - img [ref=e247]
+          - heading "GEO Optimization" [level=3] [ref=e249]
+          - paragraph [ref=e250]: AI-optimized titles, descriptions, and tags for maximum discoverability.
+          - generic [ref=e251]:
+            - generic [ref=e252]: SEO SCORE
+            - img [ref=e253]:
+              - generic [ref=e256]: "98"
+    - generic [ref=e261]:
+      - generic [ref=e262]:
+        - heading "Simple, Transparent Pricing" [level=2] [ref=e263]
+        - paragraph [ref=e264]: Start free. Scale when you're ready. No hidden fees.
+      - generic [ref=e265]:
+        - generic [ref=e266]:
+          - heading "Free" [level=3] [ref=e267]
+          - generic [ref=e268]:
+            - generic [ref=e269]: $0
+            - generic [ref=e270]: /month
+          - paragraph [ref=e271]: 2 clips per month
+          - list [ref=e272]:
+            - listitem [ref=e273]:
+              - img [ref=e274]
+              - text: Basic subtitles
+            - listitem [ref=e276]:
+              - img [ref=e277]
+              - text: 720p export
+            - listitem [ref=e279]:
+              - img [ref=e280]
+              - text: 1 platform integration
+            - listitem [ref=e282]:
+              - img [ref=e283]
+              - text: Watermark included
+          - link "Start Free" [ref=e285] [cursor=pointer]:
+            - /url: /signup
+        - generic [ref=e286]:
+          - generic [ref=e287]: Most Popular
+          - heading "Pro" [level=3] [ref=e288]
+          - generic [ref=e289]:
+            - generic [ref=e290]: $29
+            - generic [ref=e291]: /month
+          - paragraph [ref=e292]: 50 clips per month
+          - list [ref=e293]:
+            - listitem [ref=e294]:
+              - img [ref=e295]
+              - text: Interactive subtitles
+            - listitem [ref=e297]:
+              - img [ref=e298]
+              - text: AI Face-tracking & Reframe
+            - listitem [ref=e300]:
+              - img [ref=e301]
+              - text: 4K export quality
+            - listitem [ref=e303]:
+              - img [ref=e304]
+              - text: All platforms supported
+            - listitem [ref=e306]:
+              - img [ref=e307]
+              - text: No watermark
+            - listitem [ref=e309]:
+              - img [ref=e310]
+              - text: Blog & thread generation
+            - listitem [ref=e312]:
+              - img [ref=e313]
+              - text: Priority GPU access
+          - button "Join the Waitlist" [ref=e315] [cursor=pointer]
+        - generic [ref=e316]:
+          - heading "Agency" [level=3] [ref=e317]
+          - generic [ref=e318]:
+            - generic [ref=e319]: $99
+            - generic [ref=e320]: /month
+          - paragraph [ref=e321]: Unlimited clips
+          - list [ref=e322]:
+            - listitem [ref=e323]:
+              - img [ref=e324]
+              - text: Everything in Pro
+            - listitem [ref=e326]:
+              - img [ref=e327]
+              - text: Team collaboration
+            - listitem [ref=e329]:
+              - img [ref=e330]
+              - text: API access
+            - listitem [ref=e332]:
+              - img [ref=e333]
+              - text: Custom branding
+            - listitem [ref=e335]:
+              - img [ref=e336]
+              - text: Dedicated support
+            - listitem [ref=e338]:
+              - img [ref=e339]
+              - text: White-label export
+          - button "Join the Waitlist" [ref=e341] [cursor=pointer]
+    - generic [ref=e343]:
+      - generic [ref=e344]:
+        - heading "Why Creators Choose Clip" [level=2] [ref=e345]
+        - paragraph [ref=e346]: The most powerful AI clipping engine on the market.
+      - generic [ref=e348]:
+        - generic [ref=e349]:
+          - generic [ref=e350]: Feature
+          - generic [ref=e351]: Clip
+          - generic [ref=e352]: Opus Clip
+          - generic [ref=e353]: Submagic
+          - generic [ref=e354]: Vidyo.ai
+        - generic [ref=e355]:
+          - generic [ref=e356]: Parallel GPU Rendering
+          - img [ref=e359]
+          - img [ref=e363]
+          - img [ref=e367]
+          - img [ref=e371]
+        - generic [ref=e373]:
+          - generic [ref=e374]: Editable Subtitles
+          - img [ref=e377]
+          - img [ref=e381]
+          - img [ref=e385]
+          - img [ref=e389]
+        - generic [ref=e391]:
+          - generic [ref=e392]: AI B-Roll Injection
+          - img [ref=e395]
+          - img [ref=e399]
+          - img [ref=e403]
+          - img [ref=e407]
+        - generic [ref=e409]:
+          - generic [ref=e410]: Face-Tracking Reframe
+          - img [ref=e413]
+          - img [ref=e417]
+          - img [ref=e421]
+          - img [ref=e425]
+        - generic [ref=e427]:
+          - generic [ref=e428]: Blog & Thread Generation
+          - img [ref=e431]
+          - img [ref=e435]
+          - img [ref=e439]
+          - img [ref=e443]
+        - generic [ref=e445]:
+          - generic [ref=e446]: GEO Optimization
+          - img [ref=e449]
+          - img [ref=e453]
+          - img [ref=e457]
+          - img [ref=e461]
+    - generic [ref=e463]:
+      - generic [ref=e464]:
+        - heading "Frequently Asked Questions" [level=2] [ref=e466]
+        - generic [ref=e467]:
+          - button "How does Clip generate clips so fast?" [ref=e469] [cursor=pointer]:
+            - generic [ref=e470]: How does Clip generate clips so fast?
+            - img [ref=e472]
+          - button "Can I edit the subtitles after generation?" [ref=e475] [cursor=pointer]:
+            - generic [ref=e476]: Can I edit the subtitles after generation?
+            - img [ref=e478]
+          - button "What video formats and platforms are supported?" [ref=e481] [cursor=pointer]:
+            - generic [ref=e482]: What video formats and platforms are supported?
+            - img [ref=e484]
+          - button "Is there a free plan?" [ref=e487] [cursor=pointer]:
+            - generic [ref=e488]: Is there a free plan?
+            - img [ref=e490]
+          - button "How does the blog and thread generation work?" [ref=e493] [cursor=pointer]:
+            - generic [ref=e494]: How does the blog and thread generation work?
+            - img [ref=e496]
+          - button "What makes Clip different from Opus Clip or Submagic?" [ref=e499] [cursor=pointer]:
+            - generic [ref=e500]: What makes Clip different from Opus Clip or Submagic?
+            - img [ref=e502]
+      - generic [ref=e508]:
+        - heading "Ready to Go Viral?" [level=2] [ref=e509]
+        - paragraph [ref=e510]: Paste a YouTube URL and watch the magic happen.
+        - generic [ref=e511]:
+          - generic [ref=e512]:
+            - img [ref=e513]
+            - textbox "https://www.youtube.com/watch?v=..." [ref=e516]
+            - button "Generate Content" [ref=e517] [cursor=pointer]:
+              - img [ref=e518]
+              - generic [ref=e520]: Generate Content
+          - paragraph [ref=e521]: No credit card required · 3 free clips · Cancel anytime
+    - contentinfo [ref=e522]:
+      - generic [ref=e523]:
+        - generic [ref=e524]:
+          - generic [ref=e525]:
+            - link "Cremiro" [ref=e526] [cursor=pointer]:
+              - /url: /
+              - img [ref=e528]
+              - generic [ref=e533]: Cremiro
+            - paragraph [ref=e534]: The fastest way to turn long-form videos into viral short-form content, threads, and blogs.
+          - generic [ref=e535]:
+            - heading "Product" [level=4] [ref=e536]
+            - list [ref=e537]:
+              - listitem [ref=e538]:
+                - link "Features" [ref=e539] [cursor=pointer]:
+                  - /url: "#"
+              - listitem [ref=e540]:
+                - link "Pricing" [ref=e541] [cursor=pointer]:
+                  - /url: "#"
+              - listitem [ref=e542]:
+                - link "API" [ref=e543] [cursor=pointer]:
+                  - /url: "#"
+              - listitem [ref=e544]:
+                - link "Changelog" [ref=e545] [cursor=pointer]:
+                  - /url: "#"
+          - generic [ref=e546]:
+            - heading "Resources" [level=4] [ref=e547]
+            - list [ref=e548]:
+              - listitem [ref=e549]:
+                - link "Blog" [ref=e550] [cursor=pointer]:
+                  - /url: "#"
+              - listitem [ref=e551]:
+                - link "Help Center" [ref=e552] [cursor=pointer]:
+                  - /url: "#"
+              - listitem [ref=e553]:
+                - link "Tutorials" [ref=e554] [cursor=pointer]:
+                  - /url: "#"
+              - listitem [ref=e555]:
+                - link "Status" [ref=e556] [cursor=pointer]:
+                  - /url: "#"
+          - generic [ref=e557]:
+            - heading "Company" [level=4] [ref=e558]
+            - list [ref=e559]:
+              - listitem [ref=e560]:
+                - link "About" [ref=e561] [cursor=pointer]:
+                  - /url: "#"
+              - listitem [ref=e562]:
+                - link "Careers" [ref=e563] [cursor=pointer]:
+                  - /url: "#"
+              - listitem [ref=e564]:
+                - link "Contact" [ref=e565] [cursor=pointer]:
+                  - /url: "#"
+              - listitem [ref=e566]:
+                - link "Press" [ref=e567] [cursor=pointer]:
+                  - /url: "#"
+        - generic [ref=e568]:
+          - generic [ref=e569]:
+            - generic [ref=e570]: © 2025 Cremiro. All rights reserved.
+            - link "Privacy" [ref=e571] [cursor=pointer]:
+              - /url: "#"
+            - link "Terms" [ref=e572] [cursor=pointer]:
+              - /url: "#"
+            - link "Cookies" [ref=e573] [cursor=pointer]:
+              - /url: "#"
+          - generic [ref=e574]:
+            - link [ref=e575] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e576]
+            - link [ref=e578] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e579]
+            - link [ref=e581] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e582]
+            - link [ref=e584] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e585]
+  - button "Open Next.js Dev Tools" [ref=e592] [cursor=pointer]:
+    - img [ref=e593]
