@@ -3,7 +3,6 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
 export default function ResetPasswordPage() {
@@ -13,20 +12,15 @@ export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const [sessionReady, setSessionReady] = useState(false);
+  const [recovery, setRecovery] = useState<{ userId: string; secret: string } | null>(null);
   const router = useRouter();
-  const supabase = createClient();
 
-  // Supabase embeds the recovery token in the URL hash as #access_token=...
-  // The client SDK picks it up automatically on mount via onAuthStateChange.
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") {
-        setSessionReady(true);
-      }
-    });
-    return () => subscription.unsubscribe();
-  }, [supabase]);
+    const params = new URLSearchParams(window.location.search);
+    const userId = params.get("userId");
+    const secret = params.get("secret");
+    if (userId && secret) setRecovery({ userId, secret });
+  }, []);
 
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,9 +45,18 @@ export default function ResetPasswordPage() {
 
     setLoading(true);
 
-    const { error: updateError } = await supabase.auth.updateUser({ password });
+    if (!recovery) {
+      setError("The reset link is missing or has expired.");
+      setLoading(false);
+      return;
+    }
+    const response = await fetch("/api/auth/recovery", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...recovery, password }),
+    });
 
-    if (updateError) {
+    if (!response.ok) {
       setError("Failed to update password. The reset link may have expired. Please request a new one.");
       setLoading(false);
       return;
@@ -64,7 +67,6 @@ export default function ResetPasswordPage() {
 
     // Sign out and redirect to login after a moment
     setTimeout(async () => {
-      await supabase.auth.signOut();
       router.push("/login");
     }, 2500);
   };
@@ -122,7 +124,7 @@ export default function ResetPasswordPage() {
           Choose a strong password with at least 8 characters, including uppercase, lowercase, a number, and a special character.
         </p>
 
-        {!sessionReady && (
+        {!recovery && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -156,7 +158,7 @@ export default function ResetPasswordPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 minLength={8}
-                disabled={loading || !sessionReady}
+                disabled={loading || !recovery}
                 placeholder="Min. 8 chars"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 pr-10 text-sm disabled:opacity-50"
               />
@@ -182,7 +184,7 @@ export default function ResetPasswordPage() {
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
               minLength={8}
-              disabled={loading || !sessionReady}
+              disabled={loading || !recovery}
               placeholder="Re-enter your password"
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 text-sm disabled:opacity-50"
             />
@@ -190,7 +192,7 @@ export default function ResetPasswordPage() {
 
           <button
             type="submit"
-            disabled={loading || !sessionReady || !password || !confirmPassword}
+            disabled={loading || !recovery || !password || !confirmPassword}
             className="w-full py-3 rounded-lg font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             style={{ backgroundColor: "#fd6333" }}
           >

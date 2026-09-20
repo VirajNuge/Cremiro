@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/appwrite/client";
 import OutputStudio from "./OutputStudio";
 
 /* ------------------------------------------------------------------ */
@@ -534,16 +534,16 @@ export default function GeneratePanel() {
     creditsAfter: null,
   });
 
-  const supabaseRef = useRef(createClient());
+  const appwriteRef = useRef(createClient());
 
    // ── Realtime subscription for job status updates ──
   useEffect(() => {
     if (!genState.requestId || genState.jobItems.length === 0) return;
 
-    const supabase = supabaseRef.current;
+    const appwrite = appwriteRef.current;
     const jobItemIds = genState.jobItems.map((j) => j.id);
 
-    const channel = supabase
+    const channel = appwrite
       .channel(`job_items_${genState.requestId}`)
       .on(
         "postgres_changes",
@@ -578,7 +578,7 @@ export default function GeneratePanel() {
       .subscribe();
 
     // ── Catch-up fetch: pick up any updates that arrived before the subscription was established ──
-    supabase
+    appwrite
       .from("job_items")
       .select("id, status, output_data, output_refs, error_message")
       .in("id", jobItemIds)
@@ -601,7 +601,7 @@ export default function GeneratePanel() {
       });
 
     return () => {
-      supabase.removeChannel(channel);
+      appwrite.removeChannel(channel);
     };
   }, [genState.requestId, genState.jobItems.length]);
 

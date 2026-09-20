@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, Reorder, useDragControls } from "framer-motion";
 import SubtitleOverlay, { type WordEntry, type SubtitleStyle } from "@/app/components/SubtitleOverlay";
 import TranscriptEditor from "@/app/components/TranscriptEditor";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/appwrite/client";
 
 // ─── Shared Job Types (mirrors GeneratePanel's types) ────────────────────────
 
@@ -883,7 +883,7 @@ function BlockItem({
 const DEMO_FAILED = "c2-Shorts";
 
 // Mock word-level timing for demo / when no real output_data.words is available.
-// In production this is replaced by output_data.words from Supabase job_items.
+// In production this is replaced by output_data.words from Appwrite job_items.
 const MOCK_WORDS: WordEntry[] = [
   { text: "The", start: 0.0, end: 0.2 },
   { text: "future", start: 0.22, end: 0.55, highlight: true },
@@ -1255,13 +1255,13 @@ export default function OutputStudio({ onBack, requestId, jobItems, creditsAfter
   }, [toastMessage]);
 
   // ── Realtime subscription in OutputStudio for live job updates ────────────
-  const supabaseRef = useRef(createClient());
+  const appwriteRef = useRef(createClient());
 
   useEffect(() => {
     if (!requestId || !jobItems?.length || !onJobItemUpdate) return;
 
-    const supabase = supabaseRef.current;
-    const channel = supabase
+    const appwrite = appwriteRef.current;
+    const channel = appwrite
       .channel(`output_studio_${requestId}`)
       .on(
         "postgres_changes",
@@ -1287,7 +1287,7 @@ export default function OutputStudio({ onBack, requestId, jobItems, creditsAfter
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      appwrite.removeChannel(channel);
     };
   }, [requestId, jobItems?.length, onJobItemUpdate]);
 
@@ -2129,10 +2129,10 @@ export default function OutputStudio({ onBack, requestId, jobItems, creditsAfter
                                         // When toggling OFF edit mode, save to DB (non-preview only)
                                         if (isCurrentlyEditing && !isPreview) {
                                           const newText = editedCaptionTexts[cluster.id]?.[activePlat] ?? cluster.captions[activePlat] ?? "";
-                                          const supabase = supabaseRef.current;
+                                          const appwrite = appwriteRef.current;
                                           (async () => {
                                             try {
-                                              const { data: current } = await supabase.from('job_items').select('output_data').eq('id', cluster.id).single();
+                                              const { data: current } = await appwrite.from('job_items').select('output_data').eq('id', cluster.id).single();
                                               const updatedData = {
                                                 ...(current?.output_data as Record<string, unknown> ?? {}),
                                                 captions: {
@@ -2140,7 +2140,7 @@ export default function OutputStudio({ onBack, requestId, jobItems, creditsAfter
                                                   [activePlat]: newText
                                                 }
                                               };
-                                              const { error } = await supabase.from('job_items').update({ output_data: updatedData }).eq('id', cluster.id);
+                                              const { error } = await appwrite.from('job_items').update({ output_data: updatedData }).eq('id', cluster.id);
                                               if (error) throw error;
                                               setToastMessage('Caption saved');
                                             } catch {

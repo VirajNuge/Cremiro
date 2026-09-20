@@ -40,7 +40,7 @@ const nextConfig: NextConfig = {
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: https:",
               "frame-src https://www.youtube.com https://challenges.cloudflare.com",
-              "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+              "connect-src 'self' https://cloud.appwrite.io https://*.appwrite.io wss://cloud.appwrite.io wss://*.appwrite.io",
             ].join("; "),
           },
         ],

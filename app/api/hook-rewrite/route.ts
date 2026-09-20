@@ -10,7 +10,7 @@
  * Security: requires authenticated user session.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentAccount } from "@/lib/appwrite/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export async function POST(request: NextRequest) {
@@ -27,13 +27,8 @@ export async function POST(request: NextRequest) {
 
 async function handleHookRewrite(request: NextRequest) {
   // ── Auth ─────────────────────────────────────────────────────────
-  const supabase = await createClient();
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
-
-  if (authError || !user) {
+  const user = await getCurrentAccount();
+  if (!user) {
     return NextResponse.json(
       { error: "You must be logged in to use the Hook Rewriter." },
       { status: 401 }
@@ -69,7 +64,7 @@ async function handleHookRewrite(request: NextRequest) {
   }
 
   // ── Gemini call ──────────────────────────────────────────────────
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY ?? process.env.GEMINI_API_KEY;
   if (!apiKey) {
     console.error("[hook-rewrite] GEMINI_API_KEY not configured");
     return NextResponse.json(

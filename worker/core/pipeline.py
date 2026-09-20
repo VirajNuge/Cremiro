@@ -1,7 +1,7 @@
 """
 Pipeline orchestration — thin glue that connects all processing stages.
 
-Shared between local FastAPI server and Modal.com production deployment.
+Shared by the Appwrite content-worker function and local processing tools.
 Pipeline stages:
   1. Download: yt-dlp extracts video + audio + heatmap metadata
   2. Transcribe: faster-whisper generates word-level timestamps
@@ -9,7 +9,7 @@ Pipeline stages:
   4. Detect Faces: MediaPipe samples frames for face positions (per clip)
   5. Smart Crop: FFmpeg dynamically crops to platform aspect ratio following face
   6. Burn Subtitles: FFmpeg overlays karaoke-highlighted ASS subtitles
-  7. Upload: Results stored to configured storage (local or Supabase Storage)
+  7. Upload: Results stored to the private Appwrite media bucket
 
 For multiple clips, download and transcription happen once. Each clip is
 independently face-detected, cropped, and rendered.

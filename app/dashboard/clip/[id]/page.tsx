@@ -8,7 +8,7 @@ import React, {
 } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/appwrite/client";
 import { useAuth } from "@/contexts/AuthContext";
 import SubtitleOverlay, {
   type WordEntry,
@@ -40,7 +40,7 @@ export default function ClipStudioPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
-  const supabase = useRef(createClient()).current;
+  const appwrite = useRef(createClient()).current;
 
   // ── Data loading ─────────────────────────────────────────────────────────────
   const [clip, setClip] = useState<ClipData | null>(null);
@@ -49,7 +49,7 @@ export default function ClipStudioPage() {
   useEffect(() => {
     if (!id) return;
     (async () => {
-      const { data, error } = await supabase
+      const { data, error } = await appwrite
         .from("job_items")
         .select("id, output_refs, output_data, requests!inner(user_id)")
         .eq("id", id)

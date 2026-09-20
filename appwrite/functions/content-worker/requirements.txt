@@ -1,0 +1,7 @@
+appwrite==11.0.0
+requests==2.32.3
+yt-dlp==2025.3.31
+faster-whisper==1.1.1
+ffmpeg-python==0.2.0
+opencv-python-headless==4.11.0.86
+mediapipe==0.10.21

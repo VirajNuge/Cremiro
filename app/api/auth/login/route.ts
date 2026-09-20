@@ -1,131 +1,49 @@
-/**
- * POST /api/auth/login
- *
- * Server-side login handler. Responsibilities:
- * 1. Validate & sanitize inputs
- * 2. Call Supabase Auth signInWithPassword (which verifies bcrypt hash internally)
- * 3. Set the session cookie on the response
- * 4. Return generic errors to prevent user enumeration
- *
- * Security measures:
- * - All logic is server-side only
- * - Input validation before any DB call
- * - Generic error responses (no "wrong password" vs "no account" leakage)
- * - Rate limiting per IP
- * - Session cookie set via Supabase SSR (HttpOnly, Secure, SameSite)
- */
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
+import { createAdminClient, APPWRITE_SESSION_COOKIE } from "@/lib/appwrite/server";
 import { sanitizeString, validateEmail } from "@/lib/validation";
 
-// In-memory rate limiter (per IP)
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX = 10; // 10 login attempts per minute per IP
+const RATE_LIMIT_MAX = 10;
 const ipAttempts = new Map<string, { count: number; resetAt: number }>();
+const GENERIC_ERROR = "Invalid email or password. Please try again.";
 
-function checkRateLimit(ip: string): boolean {
+function checkRateLimit(ip: string) {
   const now = Date.now();
   const record = ipAttempts.get(ip);
   if (!record || record.resetAt < now) {
-    // Evict stale entries to prevent unbounded Map growth
-    if (ipAttempts.size > 10_000) {
-      for (const [key, val] of ipAttempts) {
-        if (val.resetAt < now) ipAttempts.delete(key);
-      }
-    }
     ipAttempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
     return true;
   }
   if (record.count >= RATE_LIMIT_MAX) return false;
-  record.count++;
+  record.count += 1;
   return true;
 }
 
-const GENERIC_ERROR = "Invalid email or password. Please try again.";
-
 export async function POST(request: NextRequest) {
   try {
-    return await handleLogin(request);
-  } catch (err) {
-    console.error("[login] unhandled error:", err);
-    return NextResponse.json(
-      { error: "An unexpected error occurred. Please try again." },
-      { status: 500 }
-    );
-  }
-}
+    const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+    if (!checkRateLimit(ip)) return NextResponse.json({ error: "Too many requests. Please try again later." }, { status: 429 });
 
-async function handleLogin(request: NextRequest) {
-  // Rate limiting
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip") ??
-    "unknown";
-
-  if (!checkRateLimit(ip)) {
-    return NextResponse.json(
-      { error: "Too many requests. Please try again later." },
-      { status: 429 }
-    );
-  }
-
-  // Parse body
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
-  }
-
-  if (typeof body !== "object" || body === null) {
-    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
-  }
-
-  const raw = body as Record<string, unknown>;
-  const email = sanitizeString(raw.email);
-  const password = typeof raw.password === "string" ? raw.password : "";
-  const captchaToken = typeof raw.captchaToken === "string" ? raw.captchaToken : "";
-
-  // Validate
-  const emailCheck = validateEmail(email);
-  if (!emailCheck.ok) return NextResponse.json({ error: GENERIC_ERROR }, { status: 400 });
-  if (!password || password.length < 8 || password.length > 128)
-    return NextResponse.json({ error: GENERIC_ERROR }, { status: 400 });
-  if (!captchaToken) {
-    return NextResponse.json({ error: "CAPTCHA verification is required." }, { status: 400 });
-  }
-
-  // Build response first so we can write session cookies onto it
-  const response = NextResponse.json({ success: true });
-
-  // Create Supabase SSR client wired to set cookies on this response
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
-        },
-      },
+    const raw = (await request.json()) as Record<string, unknown>;
+    const email = sanitizeString(raw.email).toLowerCase();
+    const password = typeof raw.password === "string" ? raw.password : "";
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.ok || password.length < 8 || password.length > 128) {
+      return NextResponse.json({ error: GENERIC_ERROR }, { status: 400 });
     }
-  );
+    if (!raw.captchaToken) return NextResponse.json({ error: "CAPTCHA verification is required." }, { status: 400 });
 
-  const { error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-    options: { captchaToken },
-  });
-
-  if (error) {
-    // Generic — never reveal whether the account exists
+    const session = await createAdminClient().account.createEmailPasswordSession({ email, password });
+    const response = NextResponse.json({ success: true });
+    response.cookies.set(APPWRITE_SESSION_COOKIE, session.secret, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: Math.max(60, Math.floor((new Date(session.expire).getTime() - Date.now()) / 1000)),
+    });
+    return response;
+  } catch {
     return NextResponse.json({ error: GENERIC_ERROR }, { status: 401 });
   }
-
-  return response;
 }

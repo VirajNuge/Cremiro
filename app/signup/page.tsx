@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useState, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/appwrite/client";
 import { useRouter } from "next/navigation";
 import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 
@@ -21,7 +21,7 @@ export default function SignupPage() {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const captchaRef = useRef<TurnstileInstance | null>(null);
   const router = useRouter();
-  const supabase = createClient();
+  const appwrite = createClient();
 
   const resetCaptcha = () => {
     captchaRef.current?.reset();
@@ -90,7 +90,7 @@ export default function SignupPage() {
     setLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { error } = await appwrite.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,

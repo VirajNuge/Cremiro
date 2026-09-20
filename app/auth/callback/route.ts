@@ -1,60 +1,50 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import bcrypt from "bcryptjs";
+import { Query } from "node-appwrite";
+import { APPWRITE_SESSION_COOKIE, createAdminClient, createSessionAccount } from "@/lib/appwrite/server";
+import { createProfile, findOne } from "@/lib/appwrite/data";
 
-// Whitelist of safe internal redirect paths
-function getSafeRedirectPath(next: string | null): string {
-  const fallback = "/dashboard";
-  if (!next) return fallback;
-  // Only allow relative paths starting with / and no protocol/double-slash
-  if (!next.startsWith("/") || next.startsWith("//") || next.includes("://")) {
-    return fallback;
-  }
-  // Ensure it stays on the same origin by parsing
-  try {
-    const parsed = new URL(next, "http://localhost");
-    return parsed.pathname + parsed.search;
-  } catch {
-    return fallback;
-  }
+function safeNext(value: string | null) {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("://")) return "/dashboard";
+  return value;
 }
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url);
-  const code = searchParams.get("code");
-  const next = getSafeRedirectPath(searchParams.get("next"));
+  const url = new URL(request.url);
+  const userId = url.searchParams.get("userId");
+  const secret = url.searchParams.get("secret");
+  const next = safeNext(url.searchParams.get("next"));
+  if (!userId || !secret) return NextResponse.redirect(new URL("/auth/auth-code-error", request.url));
 
-  if (code) {
-    // Build the redirect response first so we can set cookies on it
-    const redirectResponse = NextResponse.redirect(`${origin}${next}`);
-
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return request.cookies.getAll();
-          },
-          setAll(cookiesToSet) {
-            // Write cookies to the outgoing response (not the request)
-            cookiesToSet.forEach(({ name, value, options }) =>
-              redirectResponse.cookies.set(name, value, options)
-            );
-          },
-        },
-      }
-    );
-
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-
-    if (!error) {
-      return redirectResponse;
+  try {
+    const session = await createAdminClient().account.createSession({ userId, secret });
+    const oauthUser = await createSessionAccount(session.secret).get();
+    const existingProfile = await findOne("profiles", [Query.equal("user_id", userId)]);
+    if (!existingProfile) {
+      const baseUsername = (oauthUser.email?.split("@")[0] || "creator").replace(/[^a-zA-Z0-9_]/g, "").slice(0, 40) || "creator";
+      const username = `${baseUsername}_${userId.slice(-6)}`;
+      const fullName = oauthUser.name || baseUsername;
+      await createProfile(userId, {
+        user_id: userId,
+        username,
+        username_hash: await bcrypt.hash(username, 12),
+        first_name: fullName.split(" ")[0] || "Creator",
+        last_name: fullName.split(" ").slice(1).join(" ") || "",
+        full_name: fullName,
+        email: oauthUser.email || "",
+        credits_balance: 1000,
+      });
     }
-
-    // Log server-side (never log tokens)
-    console.error("[auth/callback] exchangeCodeForSession error:", error.message);
+    const response = NextResponse.redirect(new URL(next, request.url));
+    response.cookies.set(APPWRITE_SESSION_COOKIE, session.secret, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: Math.max(60, Math.floor((new Date(session.expire).getTime() - Date.now()) / 1000)),
+    });
+    return response;
+  } catch {
+    return NextResponse.redirect(new URL("/auth/auth-code-error", request.url));
   }
-
-  // Return user to an error page
-  return NextResponse.redirect(`${origin}/auth/auth-code-error`);
 }

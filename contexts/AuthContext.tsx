@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { createClient } from '@/lib/appwrite/client'
 
 export type AuthUser = {
   id: string
@@ -48,11 +48,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
   // Stable ref — createClient() returns a new object every call, so storing it
   // in a ref prevents the useEffect from re-running on every render.
-  const supabaseRef = useRef(createClient())
+  const appwriteRef = useRef(createClient())
 
   useEffect(() => {
-    const supabase = supabaseRef.current
-
     // Use server-validated getUser() via our API route instead of
     // getSession() which reads from client-side storage and can be spoofed.
     fetchUser().then((u) => {
@@ -60,27 +58,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false)
     })
 
-    // Listen for client-side auth state changes (e.g. sign-out, token refresh)
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        // Re-validate server-side on any auth state change
-        fetchUser().then((u) => {
-          setUser(u)
-          setLoading(false)
-        })
-      } else {
-        setUser(null)
-        setLoading(false)
-      }
-    })
-
-    return () => subscription.unsubscribe()
-  }, []) // empty deps — supabase client is stable via ref
+    return () => undefined
+  }, []) // the Appwrite client is stable via ref
 
   const signOut = async () => {
-    await supabaseRef.current.auth.signOut()
+    await appwriteRef.current.auth.signOut()
     setUser(null)
   }
 
